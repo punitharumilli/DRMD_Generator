@@ -2,7 +2,7 @@
 
 Convert reference material certificates and product information sheets from PDF into machine-readable Digital Reference Material Documents (DRMD).
 
-**Version 1.0.0** · Runs in the browser · No installation
+**Version 1.0.0** · Runs in the browser · No installation · **[Open the generator](https://punitharumilli.github.io/DRMD_Generator/)**
 
 ---
 
@@ -39,10 +39,11 @@ Nothing needs to be installed, and no administrator rights are required.
 
 ## Getting started
 
-1. Download **`DRMD-Generator.html`** from the [latest release](../../releases/latest).
-2. Open the file in Chrome or Edge, either by double-clicking it or by dragging it into a browser window.
-3. Click **Settings** and enter your Gemini API key.
-4. Click **Upload PDF** to convert one document, or **Upload folder** to convert many.
+1. Open the generator in Chrome or Edge, in one of two ways:
+   - **Online:** go to <https://punitharumilli.github.io/DRMD_Generator/>
+   - **As a file:** download **`DRMD-Generator.html`** from the [latest release](../../releases/latest) and open it, either by double-clicking it or by dragging it into a browser window.
+2. Click **Settings** and enter your Gemini API key.
+3. Click **Upload PDF** to convert one document, or **Upload folder** to convert many.
 
 When you convert a folder, the browser asks once for permission to save into it. Choose **Allow**. The XML file and HTML report of each document are saved next to its PDF.
 
@@ -50,7 +51,7 @@ When you convert a folder, the browser asks once for permission to save into it.
 
 ## Data and privacy
 
-- The generator runs entirely in your browser. There is no server, and your documents are not stored anywhere else.
+- The generator runs entirely in your browser, whether you open it online or as a file. There is no server, and your documents are not uploaded to GitHub or stored anywhere else.
 - To extract the data, the PDF is sent to Google Gemini using your own API key. Substance and organisation names are looked up at PubChem and ROR.
 - Your API key is kept only while the page is open and is not saved.
 
