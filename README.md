@@ -8,9 +8,28 @@ Convert reference material certificates and product information sheets from PDF 
 
 ## Video guide
 
-<!-- VIDEO: add the video link or embed here. -->
+[![Video guide for the DRMD AI Generator. Click to watch the video.](video/video-guide-preview.jpg)](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator)
 
-*A short video showing how to use the generator will be added here.*
+A 12-minute walkthrough of every step, from entering the API key to converting a whole folder, with spoken explanation and captions. Click the picture to watch it on the DRMD video site, with chapters, a transcript and a download option.
+
+**Chapters.** Click a time to start the video at that point.
+
+| Time | Chapter |
+|---:|---|
+| [0:00](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator) | Introduction |
+| [0:20](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=20) | Getting started |
+| [0:52](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=52) | Settings and API key |
+| [1:27](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=87) | Converting a certificate |
+| [2:42](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=162) | Administrative data |
+| [5:04](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=304) | Materials |
+| [5:32](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=332) | Properties |
+| [7:36](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=456) | Checking values |
+| [8:24](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=504) | Statements |
+| [8:45](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=525) | Comment and documents |
+| [9:11](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=551) | Validate and export |
+| [10:39](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=639) | Converting a folder |
+| [12:02](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=722) | Importing an XML file |
+| [12:15](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=735) | Summary |
 
 ---
 
