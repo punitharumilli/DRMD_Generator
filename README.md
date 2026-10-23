@@ -80,6 +80,25 @@ Please make sure that your documents may be processed by Google Gemini before yo
 
 ---
 
+## Security
+
+The generator is built so that your API key stays with you:
+
+- The key is held only in the open tab. It is not saved in the browser, in cookies or in any file, and it is gone when the tab is closed or reloaded.
+- It is sent only to Google, in a request header and never in a web address. PubChem, ROR and CAS never receive it.
+- A security policy built into the page lets only the generator's own code run, and lets the page connect only to Google Gemini, PubChem, CAS Common Chemistry and ROR. Code hidden in a PDF, in an AI answer or in an imported XML file cannot run or send anything elsewhere.
+- Text from certificates, AI answers and imported files is always shown as text, and only ordinary web links are accepted.
+- The generator does not run inside another website, or when another page could still reach its tab.
+
+**Protect your key.** Anyone who has the key can use it at your expense:
+
+- Restrict the key to the **Generative Language API** in Google AI Studio or Google Cloud.
+- Set a budget alert or a spending limit.
+- Use a personal key rather than one shared across an organisation, and do not share screenshots or recordings that show it.
+- If a key may have been exposed, delete it in Google AI Studio and create a new one.
+
+---
+
 ## Documentation
 
 **DRMD Best Practice guide:** <https://punitharumilli.github.io/BestPracticeDocs/>
