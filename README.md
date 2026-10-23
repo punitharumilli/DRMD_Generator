@@ -71,8 +71,10 @@ When you convert a folder, the browser asks once for permission to save into it.
 ## Data and privacy
 
 - The generator runs entirely in your browser, whether you open it online or as a file. There is no server, and your documents are not uploaded to GitHub or stored anywhere else.
-- To extract the data, the PDF is sent to Google Gemini using your own API key. Substance and organisation names are looked up at PubChem and ROR.
+- To extract the data, the PDF is sent to Google Gemini using your own API key. Substance and organisation names are looked up at PubChem, CAS Common Chemistry and ROR.
 - Your API key is kept only while the page is open and is not saved.
+- **Free or paid Gemini key.** With a free-of-charge key, Google's [Gemini API terms](https://ai.google.dev/gemini-api/terms) allow Google to use the content sent and the answers to improve its products, and people at Google may read them. This does not apply to paid use, and in the European Economic Area, the United Kingdom and Switzerland the rules for paid use apply to free keys as well. For confidential documents, use a key from a Google Cloud project with billing enabled.
+- The generator itself collects nothing: no statistics, no cookies, no tracking.
 
 Please make sure that your documents may be processed by Google Gemini before you use the generator.
 
