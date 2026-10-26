@@ -62,9 +62,20 @@ Nothing needs to be installed, and no administrator rights are required.
    - **Online:** go to <https://punitharumilli.github.io/DRMD_Generator/>
    - **As a file:** download **`DRMD-Generator.html`** from the [latest release](../../releases/latest) and open it, either by double-clicking it or by dragging it into a browser window.
 2. Click **Settings**, choose an AI provider and enter your API key. **Check key** confirms that the key works.
-3. Click **Upload PDF** to convert one document, or **Upload folder** to convert many.
+3. Click **Upload PDF** to convert one document, or **Upload folder** to convert many. You can also drag a PDF, several PDFs or a folder onto the left side of the generator.
 
-When you convert a folder, the browser asks once for permission to save into it. Choose **Allow**. The XML file and HTML report of each document are saved next to its PDF.
+When you convert a folder, the browser asks once for permission to save into it. Choose **Allow**. The XML file and HTML report of each document are saved next to its PDF. When you drop a folder, the generator asks whether to save the results into the folder or to keep them in the tab (to download as a ZIP).
+
+If you upload a document before entering an API key, it waits: the generator opens **Settings**, checks the key as soon as you enter it, and starts the extraction by itself when the key works.
+
+---
+
+## Reviewing the extracted data
+
+- Click a field, or its locate button, to see where its value comes from: the place is marked in the PDF on the left.
+- When a value is not written in the PDF word for word, a short notice at the bottom of the PDF explains it (at the top, when the marked place is at the foot of the page), for example that the date "01 June 2020" is written as 2020-06-01 in the XML (ISO 8601), that a country code was derived from the address, or that the AI added part of an address that is not in the PDF. The notice closes after 10 seconds or as soon as you click or type anywhere. Values that are in the PDF word for word are only marked.
+- Information that is not in the certificate is left empty and is not written to the XML or the HTML report. If a required field stays empty, the generator reports it as an error, so it can be filled in before export.
+- Zoom the PDF with **−** and **+** above it, or with Ctrl and the mouse wheel, one small step at a time, from 50 % to 300 %. Click the percentage to see the whole page again.
 
 ---
 
@@ -131,6 +142,23 @@ Please make sure that your documents may be processed by the provider you choose
 
 ---
 
+## Network access and offline use
+
+Everything the generator needs is inside the one HTML file: the program, the fonts, the PDF reader (pdf.js with its image decoders) and the ZIP library. Opening it loads nothing from the internet, so it works the same as a file on a computer or from the website, and a firewall or proxy that blocks content delivery networks does not affect it.
+
+The generator connects to the internet only for these tasks. If your organisation filters web traffic, these addresses (HTTPS, port 443) must be reachable from the browser:
+
+| Task | Address |
+|---|---|
+| Reading the certificates (only the provider you choose) | `generativelanguage.googleapis.com` (Google Gemini), `api.openai.com`, `api.anthropic.com`, `api.mistral.ai`, `dashscope-intl.aliyuncs.com` / `dashscope-us.aliyuncs.com` / `dashscope.aliyuncs.com` (Qwen, by region), `openrouter.ai` |
+| CAS numbers and InChIKeys of substances | `pubchem.ncbi.nlm.nih.gov`, `commonchemistry.cas.org` |
+| ROR IDs of organisations | `api.ror.org` |
+| Opening the generator online (not needed for the file) | `punitharumilli.github.io` |
+
+Links to the DRMD Best Practice guide and the video guide open only when you click them. Without these addresses the form can still be filled in by hand, validated and exported.
+
+---
+
 ## Security
 
 The generator is built so that your API key stays with you:
@@ -140,6 +168,7 @@ The generator is built so that your API key stays with you:
 - A security policy built into the page lets only the generator's own code run, and lets the page connect only to the six AI providers (Google Gemini, OpenAI, Anthropic, Mistral AI, Alibaba Cloud for Qwen in its three regions, and OpenRouter), PubChem, CAS Common Chemistry and ROR. Code hidden in a PDF, in an AI answer or in an imported XML file cannot run or send anything elsewhere.
 - Anthropic accepts requests made directly from a web page only with an extra header that confirms this. The generator sends it, because the key is your own and is used only in your browser.
 - Text from certificates, AI answers and imported files is always shown as text, and only ordinary web links are accepted.
+- PDFs are read with pdf.js 6.4.299 from Mozilla, the current release (October 2026). It includes the fixes for the published pdf.js security issues, most recently CVE-2026-16633 (fixed in 6.2.108). The build checks that the embedded pdf.js files are exactly the official ones (the same as the npm package `pdfjs-dist` 6.4.299, which is published with a signed build provenance from Mozilla's GitHub repository). Scripts and forms inside PDFs are never run. pdf.js decodes scanned (JBIG2, CCITT) and JPEG 2000 images with WebAssembly, so the security policy allows WebAssembly (`wasm-unsafe-eval`); it still does not allow JavaScript to be created from text.
 - The generator does not run inside another website, or when another page could still reach its tab.
 
 **Protect your key.** Anyone who has the key can use it at your expense:
@@ -153,7 +182,7 @@ The generator is built so that your API key stays with you:
 
 ## Maintenance
 
-Every three months, check for each provider that the recommended models are still offered, that the prices in the generator's price list match the provider's pricing page, and that the provider still accepts requests from a web page. Update the generator and the date in "Usage and costs" when something has changed.
+Every three months, check for each provider that the recommended models are still offered, that the prices in the generator's price list match the provider's pricing page, and that the provider still accepts requests from a web page. Update the generator and the date in "Usage and costs" when something has changed. Check also whether a newer pdf.js release fixes security issues ([pdf.js releases](https://github.com/mozilla/pdf.js/releases)) and update it if so.
 
 ---
 
@@ -171,4 +200,4 @@ The guide explains every element of the DRMD schema and its rules. You can also 
 
 Code / Generator: EUPL-1.2 *(details to follow)*
 
-The generator file includes open-source components, each under its own license: React, the Google Gen AI SDK, pdf.js, JSZip and the Inter typeface. Their notices are included in the file.
+The generator file includes open-source components, each under its own license: React, the Google Gen AI SDK, pdf.js (with the OpenJPEG and PDFium JBIG2 image decoders), JSZip and the Inter typeface. Their notices are included in the file.
