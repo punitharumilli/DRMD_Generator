@@ -77,6 +77,17 @@ If you upload a document before entering an API key, it waits: the generator ope
 - Information that is not in the certificate is left empty and is not written to the XML or the HTML report. If a required field stays empty, the generator reports it as an error, so it can be filled in before export.
 - Zoom the PDF with **−** and **+** above it, or with Ctrl and the mouse wheel, one small step at a time, from 50 % to 300 %. Click the percentage to see the whole page again.
 
+### Units in D-SI
+
+Every unit of a property table is also written in the D-SI unit format that the DRMD XML uses (for example mg/kg as `\milli\gram\kilogram\tothe{-1}`). The rules come from the [D-SI guide, version 1.3](https://zenodo.org/records/3816686) (SmartCom, DOI 10.5281/zenodo.3816686): its unit identifiers, SI prefixes, syntax and rules R007 to R020.
+
+- **The value never changes.** A unit is only written as a D-SI unit of exactly the same size. Where that needs an SI prefix or a unit outside the SI, the unit gets a lower quality class: platinum (SI base units only), gold (SI prefixes and derived units such as `\gram`), silver (units accepted for use with the SI, such as `\litre`), bronze (units of the previous SI brochure, such as `\bar`). A unit with no D-SI form of the same size (lb, °F, HRC …) is written as it is (class "improvable") and is never converted with a factor.
+- `\percent` and `\ppm` are identifiers of the later D-SI unit list (version 2), which the DRMD XML uses; they are not in the guide 1.3.
+- The generator reads the context of each unit: the quantity, the table name and description, the property set with its procedures, and the metrological traceability statement. A ppb or ‰ is written as a mass, amount or volume fraction only when the certificate says which; a bare "C" is a temperature only when the text is about one.
+- Units the rules cannot write on their own (a unit with words around it, such as "mg/kg dry mass") are given to the AI with that context. Every AI answer is checked by the same rules: it is used only if it is a valid D-SI unit of exactly the same size and quantity, and a kind of fraction must be quoted from the certificate. Wrong answers are thrown away.
+- The D-SI unit column can be edited. A unit typed there is checked against the rules (an invalid one is marked and reported in **Validate & export**). Changing the unit itself writes the D-SI unit again at once.
+- Click a D-SI unit to see where it comes from: the unit is marked in the PDF, and a notice explains how it was written, its quality class with the rules, and links to the D-SI guide.
+
 ---
 
 ## AI providers
@@ -116,6 +127,7 @@ Under **Settings**, the generator shows the AI requests made in the open tab: pe
 - OpenRouter states the cost of each request in its answer; that amount is shown as it is. For Google, OpenAI, Anthropic, Mistral AI and Qwen, the cost is the reported tokens multiplied by the provider's published list price, as checked on 26 October 2026. A model that is not in the generator's price list shows "price not listed". For Qwen this applies to the US (Virginia) region, whose price depends on a workspace setting that the generator cannot see.
 - Not included: use within a free tier, discounts (Alibaba Cloud currently gives limited-time and night-time discounts on some Qwen models), taxes, Mistral AI's per-page fee for documents (where it applies), and requests that the generator stopped waiting for, which a provider may still bill. The provider's own billing page is the binding record.
 - Google, OpenAI, Anthropic, Mistral AI and Alibaba Cloud publish no response times for these models; OpenAI and Anthropic only rate their models as faster or slower, and Alibaba Cloud ends requests that take longer than 300 seconds. OpenRouter shows the measured latency of each model on its website. The times in the generator are measured in your browser and depend on the size of the PDF and on how busy the provider is.
+- **Requests per minute.** Every provider limits how many requests a key may send to a model per minute. The column "Last minute" shows the requests of the last 60 seconds. Once a model's limit is known (stated by the provider when it refuses a request, or in its answers, or counted at the moment it refused one), the generator waits for a free slot before sending the next request to that model, instead of sending requests that would be refused and leave fields empty.
 - The figures exist only in the open tab and are gone when it is closed or reloaded.
 
 ---
