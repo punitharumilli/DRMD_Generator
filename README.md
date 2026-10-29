@@ -79,14 +79,29 @@ If you upload a document before entering an API key, it waits: the generator ope
 
 ### Units in D-SI
 
-Every unit of a property table is also written in the D-SI unit format that the DRMD XML uses (for example mg/kg as `\milli\gram\kilogram\tothe{-1}`). The rules come from the [D-SI guide, version 1.3](https://zenodo.org/records/3816686) (SmartCom, DOI 10.5281/zenodo.3816686): its unit identifiers, SI prefixes, syntax and rules R007 to R020.
+Every unit of a property table is also written in the D-SI unit format that the DRMD XML uses (for example mg/kg as `\milli\gram\kilogram\tothe{-1}`). The rules come from the [D-SI guide, version 1.3](https://zenodo.org/records/3816686) (SmartCom, DOI 10.5281/zenodo.3816686) and from the unit list of [D-SI 2.2.1](https://zenodo.org/records/12200678) (PTB, DOI 10.5281/zenodo.12200678), the D-SI version the DRMD schema imports. Every rule the generator applies is cited with its page in the guide.
 
-- **The value never changes.** A unit is only written as a D-SI unit of exactly the same size. Where that needs an SI prefix or a unit outside the SI, the unit gets a lower quality class: platinum (SI base units only), gold (SI prefixes and derived units such as `\gram`), silver (units accepted for use with the SI, such as `\litre`), bronze (units of the previous SI brochure, such as `\bar`). A unit with no D-SI form of the same size (lb, °F, HRC …) is written as it is (class "improvable") and is never converted with a factor.
-- `\percent` and `\ppm` are identifiers of the later D-SI unit list (version 2), which the DRMD XML uses; they are not in the guide 1.3.
-- The generator reads the context of each unit: the quantity, the table name and description, the property set with its procedures, and the metrological traceability statement. A ppb or ‰ is written as a mass, amount or volume fraction only when the certificate says which; a bare "C" is a temperature only when the text is about one.
-- Units the rules cannot write on their own (a unit with words around it, such as "mg/kg dry mass") are given to the AI with that context. Every AI answer is checked by the same rules: it is used only if it is a valid D-SI unit of exactly the same size and quantity, and a kind of fraction must be quoted from the certificate. Wrong answers are thrown away.
-- The D-SI unit column can be edited. A unit typed there is checked against the rules (an invalid one is marked and reported in **Validate & export**). Changing the unit itself writes the D-SI unit again at once.
-- Click a D-SI unit to see where it comes from: the unit is marked in the PDF, and a notice explains how it was written, its quality class with the rules, and links to the D-SI guide.
+| What | Where in the D-SI guide v1.3 (printed page) |
+|---|---|
+| Syntax: prefix, unit, exponent `\tothe{n}`, no division sign | Section 3, pp. 12–17 |
+| Unit identifiers and classes | Tables A.1–A.4, pp. 47–52; rules R017–R020, pp. 74–75 |
+| SI prefixes | Table A.5, p. 53 |
+| Rules for units (one prefix and exponent, no `\kilo\gram`, exponents, one prefix per numerator and denominator …) | R007–R015, pp. 71–73 |
+| Quality classes platinum, gold, silver, bronze, improvable | Section 8, pp. 39–41 |
+| Numbers in `si:value` | Section 4, p. 19; R003, p. 70 |
+| Non-SI units in `si:hybrid` (not written by the generator) | Section 7, pp. 31–38 |
+
+- **The value never changes.** A unit is only written as a D-SI unit of exactly the same size. Where that needs an SI prefix or a unit outside the SI, the unit gets a lower quality class: platinum (SI base units only), gold (SI prefixes and derived units such as `\gram`), silver (units accepted for use with the SI, such as `\litre`), bronze (units of the previous SI brochure, such as `\bar`; these are not in the D-SI 2.2.1 unit list, which the report points out). A unit with no D-SI form of the same size (lb, °F, psi, HRC, IU, cfu …) is written as it is (class "improvable") and is never converted with a factor.
+- **A unit is converted only when it can be read in one way.** Element symbols, hardness scales and other non-SI abbreviations are never taken for SI symbols: "pH" is not picohenry, "HV" is not henry volt, "mg Hg/kg" is not henry gram, "dBm" is not decibel metre, "U/L" (enzyme units) is not dalton per litre. Such a unit is written as typed, or, where it only names something besides the unit, written without it (next point).
+- **Notes in the unit text are kept out of the D-SI unit**, because a D-SI unit holds only unit, prefix and exponent identifiers: the basis ("mg/kg dry mass", "µg/kg ww"), the analyte ("mg N/kg", "mg Hg/kg", "µg/L as N", "mg KOH/g"), the kind of fraction ("% (m/m)", "mass %"). **Validate & export** reports each such note, so that it is kept in the quantity name. pH is a quantity of dimension one and is written with `\one`.
+- **% (w/v)** is a mass concentration (1 % (w/v) = 1 g per 100 mL), not a ratio: it is written `\gram\deci\litre\tothe{-1}`, never `\percent`.
+- **Powers of ten written with the unit** ("× 10³ g/mol") are carried by a prefix (`\kilogram\mole\tothe{-1}`), so the number stays as printed.
+- `\percent`, `\ppm`, `\bit`, `\byte`, the binary prefixes (`\kibi` …), `\ronna`, `\quetta`, `\ronto`, `\quecto` and the division operator `\per` are from the D-SI 2.2.1 unit list; they are accepted when typed or imported. The generator itself writes division as a negative exponent, which keeps the better class.
+- The generator reads the context of each unit: the quantity, the table name and description, the property set with its procedures, and the metrological traceability statement. A ppb or ‰ is written as a mass, amount or volume fraction only when the certificate says which; a bare "C" is a temperature only when the text is about one; "rad" in a dose and "°" in a temperature are not converted.
+- Units the rules cannot decide on their own ("mg/kg N": nitrogen or newton?) are given to the AI with that context. Every AI answer is checked by the same rules: it is used only if it is a valid D-SI unit of exactly the same size and quantity, and the AI may leave out only the notes the rules found (never a number, a power of ten, a "/" or a unit symbol); an element symbol may be left out only when the context names the element, and a kind of fraction must be quoted from the certificate. Wrong answers are thrown away. Units that are not SI units (lb, HRC, cfu …) are not sent to the AI.
+- **Numbers.** Digit groups ("100 000", "0.000 12") are read as one number, and thousands separators beside a decimal mark ("1,234.5", "1.234,5") are removed; Validate & export shows each such value. "1,234" or "12,345" could be a decimal comma or a thousands separator: such a value is not written as a number, and Validate & export reports it as an error until it is entered with a decimal point.
+- The D-SI unit column can be edited. A unit typed there is checked against the rules (an invalid one is marked with the rule and its page, and reported in **Validate & export**). Changing the unit itself writes the D-SI unit again at once.
+- Click a D-SI unit to see where it comes from: the unit is marked in the PDF, and a notice explains how it was written, its quality class with the rules and pages, and opens the D-SI guide on Zenodo at the page of the rule.
 
 ---
 
