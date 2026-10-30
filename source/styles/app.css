@@ -1,0 +1,130 @@
+/* SPDX-FileCopyrightText: 2026 Bundesanstalt für Materialforschung und -prüfung (BAM)
+   SPDX-License-Identifier: EUPL-1.2 */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  /* The generator is a fixed-size workspace: only its panes scroll, never the page itself. */
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    @apply bg-canvas text-ink font-sans text-base antialiased;
+    font-feature-settings: "kern" 1;
+  }
+  /* Values are compared digit by digit against the certificate: keep figures aligned. */
+  input, textarea, select, table { font-variant-numeric: tabular-nums; }
+  ::selection { background: #cfe3e9; }
+  :focus-visible { outline: 2px solid #1d6276; outline-offset: 2px; }
+  input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #c2c9d0; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background-color: #a5afb8; }
+  .desk-scroll::-webkit-scrollbar-thumb { background-color: #5b6670; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+}
+
+@layer components {
+  /* ---- Buttons ------------------------------------------------------------------------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded text-sm font-medium whitespace-nowrap
+           border transition-colors duration-100 select-none
+           disabled:opacity-45 disabled:cursor-not-allowed;
+  }
+  .btn svg { @apply shrink-0; }
+  .btn-primary { @apply btn bg-petrol-600 border-petrol-600 text-white hover:bg-petrol-700 hover:border-petrol-700 active:bg-petrol-800; }
+  .btn-secondary { @apply btn bg-white border-line-strong text-ink hover:bg-sunken hover:border-ink-faint active:bg-line-soft; }
+  .btn-quiet { @apply btn bg-transparent border-transparent text-ink-soft hover:bg-line-soft hover:text-ink; }
+  .btn-link { @apply inline-flex items-center gap-1 text-sm font-medium text-petrol-600 hover:text-petrol-800 hover:underline underline-offset-2 disabled:opacity-45 disabled:no-underline; }
+  .btn-sm { @apply h-7 px-2.5 text-xs; }
+  .btn-lg { @apply h-10 px-4 text-base; }
+  .icon-btn {
+    @apply inline-flex items-center justify-center w-7 h-7 rounded text-ink-muted transition-colors
+           hover:bg-line-soft hover:text-ink disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent;
+  }
+  .icon-btn-danger { @apply icon-btn hover:bg-bad-bg hover:text-bad; }
+
+  /* ---- Form fields --------------------------------------------------------------------- */
+  .field-label { @apply block text-xs font-medium text-ink-soft; }
+  .field-control {
+    @apply w-full h-8 px-2.5 rounded border border-line-strong bg-white text-base text-ink
+           placeholder:text-ink-faint transition-[border-color,box-shadow] duration-100
+           hover:border-ink-faint
+           focus:border-petrol-600 focus:ring-2 focus:ring-petrol-600/20 focus:outline-none
+           disabled:bg-sunken disabled:text-ink-faint disabled:cursor-not-allowed;
+  }
+  textarea.field-control { @apply h-auto min-h-[76px] py-1.5 leading-[1.45] resize-y; }
+  select.field-control { @apply pr-7 appearance-none bg-no-repeat; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235f6b77' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-position: right 8px center; }
+  /* A value the generator computes from other fields (D-SI unit, ISO 8601 duration ...) */
+  .computed {
+    @apply flex items-center min-h-[32px] px-2.5 py-1 rounded border border-dashed border-line-strong bg-sunken
+           text-xs text-ink-soft break-all tabular-nums;
+  }
+  .hint { @apply text-xs text-ink-muted leading-[1.45]; }
+  .check-label { @apply inline-flex items-center gap-2 text-sm text-ink cursor-pointer select-none; }
+  .check-label input[type=checkbox] { @apply w-4 h-4 rounded-sm border-line-strong accent-petrol-600 cursor-pointer; }
+
+  /* ---- Sections and repeated entries -------------------------------------------------- */
+  .page-title { @apply text-xl font-semibold text-ink tracking-[-0.01em]; }
+  .section { @apply pt-1; }
+  .section + .section { @apply mt-9; }
+  .section-head { @apply flex items-end justify-between gap-4 pb-2 mb-4 border-b border-line; }
+  .section-title { @apply text-md font-semibold text-ink; }
+  .section-lede { @apply -mt-2 mb-4 text-sm text-ink-muted max-w-[68ch]; }
+  .entry { @apply relative rounded-md border border-line bg-white px-4 pt-3 pb-4; }
+  .entry + .entry { @apply mt-3; }
+  .entry-head { @apply flex items-center justify-between gap-3 mb-3 min-h-[28px]; }
+  .entry-title { @apply text-sm font-semibold text-ink-soft; }
+
+  /* ---- Tabs ------------------------------------------------------------------------------ */
+  /* Folder tabs: dividers between them, the open tab joins the page below. */
+  .tabbar { @apply flex items-end gap-0 px-2 pt-2 bg-sunken border-b border-line overflow-x-auto; }
+  .tab {
+    @apply relative flex-1 min-w-max inline-flex items-center justify-center gap-1.5 h-10 px-2 xl:px-3 -mb-px rounded-t-md border border-transparent
+           text-sm font-medium text-ink-muted whitespace-nowrap transition-colors hover:text-ink hover:bg-white/60;
+  }
+  .tab + .tab::before { content: ""; @apply absolute left-0 top-3 bottom-3 w-px bg-line-strong; }
+  .tab[aria-selected="true"] {
+    @apply bg-white text-ink border-line border-b-white;
+    box-shadow: inset 0 2px 0 #1d6276;
+  }
+  .tab[aria-selected="true"]::before, .tab[aria-selected="true"] + .tab::before, .tab:hover::before, .tab:hover + .tab::before { opacity: 0; }
+
+  /* ---- Status ---------------------------------------------------------------------------- */
+  .dot { @apply inline-block w-2 h-2 rounded-full shrink-0; }
+  .tag { @apply inline-flex items-center gap-1.5 h-[22px] px-2 rounded-sm text-2xs font-medium whitespace-nowrap border; }
+  .tag-ok { @apply tag bg-ok-bg text-ok border-ok-line; }
+  .tag-check { @apply tag bg-check-bg text-check border-check-line; }
+  .tag-bad { @apply tag bg-bad-bg text-bad border-bad-line; }
+  .tag-neutral { @apply tag bg-sunken text-ink-muted border-line; }
+  .tag-active { @apply tag bg-petrol-50 text-petrol-700 border-petrol-200; }
+
+  /* ---- Tables ---------------------------------------------------------------------------- */
+  .data-table { @apply w-full text-sm border-collapse; }
+  .data-table th { @apply text-left font-medium text-xs text-ink-muted bg-sunken px-2 py-2 border-b border-line whitespace-nowrap; }
+  .data-table td { @apply px-2 py-1 border-b border-line-soft align-middle; }
+  .data-table tbody tr:last-child td { @apply border-b-0; }
+  .cell-input {
+    @apply w-full h-7 px-1.5 rounded-sm border border-transparent bg-transparent text-sm text-ink
+           hover:border-line-strong focus:border-petrol-600 focus:bg-white focus:outline-none focus:ring-2 focus:ring-petrol-600/15;
+  }
+
+  /* ---- Panels ---------------------------------------------------------------------------- */
+  .panel { @apply rounded-md border border-line bg-white; }
+  .panel-head { @apply flex items-center justify-between gap-3 px-4 h-11 border-b border-line text-sm font-semibold text-ink; }
+  .banner { @apply flex items-start gap-2.5 px-5 py-2 text-sm border-b; }
+
+  .spinner { @apply inline-block rounded-full border-2 border-current border-r-transparent animate-spin; }
+}
+
+/* PDF highlight: a highlighter stroke, not a box */
+.pdf-mark { background: rgba(255, 216, 77, 0.5); mix-blend-mode: multiply; box-shadow: 0 0 0 1px rgba(214, 160, 0, 0.55); border-radius: 2px; }
+
+/* Field focus is mirrored in the PDF: the field being reviewed gets a marker-coloured rule */
+.field-row:focus-within > .field-label-row .field-label { color: #123f4c; }
