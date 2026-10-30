@@ -1,0 +1,32 @@
+{
+  "name": "drmd-generator-single-file",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Builds the DRMD Generator into one self-contained HTML file.",
+  "license": "EUPL-1.2",
+  "author": "Bundesanstalt für Materialforschung und -prüfung (BAM)",
+  "homepage": "https://punitharumilli.github.io/DRMD_Generator/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/punitharumilli/DRMD_Generator",
+    "directory": "source"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:dsi": "node test/dsi-unit.cjs && node test/dsi-matrix.cjs && node test/rpm-unit.cjs && python3 -I test/dsi-xcheck.py"
+  },
+  "dependencies": {
+    "@google/genai": "1.52.0",
+    "p-retry": "4.6.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "3.4.17",
+    "typescript": "^5.6.0"
+  }
+}

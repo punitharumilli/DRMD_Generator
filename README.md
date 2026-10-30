@@ -237,10 +237,41 @@ The guide explains every element of the DRMD schema and its rules. You can also 
 
 ---
 
-## License
+## Source code
 
-<!-- LICENSE: add the licence text or a link to the LICENSE file here. -->
+The complete source code of the generator is in the [`source`](source/) folder: the application (TypeScript and React), the build script, the styles, the D-SI tests and the third-party files that are built into `DRMD-Generator.html`. [`source/BUILD.md`](source/BUILD.md) explains how to build the file and what each part does. `DRMD-Generator.html` is built from exactly this source.
 
-Code / Generator: EUPL-1.2 *(details to follow)*
+---
 
-The generator file includes open-source components, each under its own license: React, the Google Gen AI SDK, pdf.js (with the OpenJPEG and PDFium JBIG2 image decoders), JSZip and the Inter typeface. Their notices are included in the file.
+## Changes and contributions
+
+BAM maintains the generator and publishes its official version in this repository and at <https://punitharumilli.github.io/DRMD_Generator/>. If you find an error or need a change, please tell us instead of publishing a changed copy: open an issue in this repository or write to [drmd@bam.de](mailto:drmd@bam.de). BAM reviews each request and releases the change, so that everyone keeps working with the same generator. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Licence
+
+Copyright (c) 2026 Bundesanstalt für Materialforschung und -prüfung (BAM)
+
+Licensed under the EUPL v1.2 (European Union Public Licence), see [LICENSE](LICENSE). The licence is published in all official languages of the EU at <https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12>; all language versions have identical value (Article 13).
+
+In short (the licence text is binding, not this summary):
+
+- Anyone may use, copy and pass on the generator, for any purpose.
+- Changed versions may be made. Whoever passes one on, or makes it available to others online, must keep all copyright and licence notices, mark the changed version prominently as changed with the date of the change, make its source code available and license it under the EUPL (or, where the EUPL allows it, a compatible licence) (Articles 1 and 5).
+- The licence gives no right to use the name or logo of BAM, except to state where the generator comes from (Article 5, "Legal Protection"). A changed version must not be presented as BAM's generator.
+- The generator is provided as is, without warranty (Articles 7 and 8). Check every DRMD before you publish it.
+
+The DRMD files and HTML reports you create with the generator are your own documents.
+
+The licence does not cover the BAM name and logo or the DRMD logo, which is the icon of the generator page and appears in `video/video-guide-preview.jpg`; please do not use them without BAM's permission.
+
+The generator file also contains open-source software of other projects, each under its own licence: React (MIT), the Google Gen AI SDK (Apache-2.0), PDF.js with its JBIG2 and OpenJPEG image decoders (Apache-2.0, BSD-3-Clause, BSD-2-Clause), JSZip (MIT), p-retry and retry (MIT), Tailwind CSS (MIT) and the Inter typeface (SIL Open Font License 1.1). [`source/THIRD-PARTY-NOTICES.txt`](source/THIRD-PARTY-NOTICES.txt) lists them with their versions, copyright notices and licence texts; the same texts, and the EUPL, are included at the end of `DRMD-Generator.html`.
+
+---
+
+## Acknowledgements
+
+The development of the Digital Reference Material Document (DRMD) is partially funded and supported by the [QI-Digital](https://www.qi-digital.de/) project.
+
+The D-SI unit rules follow the D-SI guide v1.3 (SmartCom, 2020, [DOI 10.5281/zenodo.3816686](https://doi.org/10.5281/zenodo.3816686), CC BY 4.0) and the unit list of D-SI 2.2.1 of the Physikalisch-Technische Bundesanstalt (PTB) ([DOI 10.5281/zenodo.12200678](https://doi.org/10.5281/zenodo.12200678)).
