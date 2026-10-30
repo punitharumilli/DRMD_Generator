@@ -1,6 +1,6 @@
 # DRMD AI Generator
 
-Convert reference material certificates and product information sheets from PDF into machine-readable Digital Reference Material Documents (DRMD).
+Create machine-readable Digital Reference Material Documents (DRMD): enter them by hand, open and edit existing ones, or convert reference material certificates and product information sheets from PDF with AI.
 
 **Version 1.0.0** · Runs in the browser · No installation · **[Open the generator](https://punitharumilli.github.io/DRMD_Generator/)**
 
@@ -35,14 +35,15 @@ A 12-minute walkthrough of every step, from entering the API key to converting a
 
 ## About
 
-Reference material certificates and product information sheets are usually published as PDF documents. People can read them, but software cannot. The DRMD AI Generator reads these documents and converts them into DRMD XML files: a structured, machine-readable format based on the DRMD schema 1.0.0.
+Reference material certificates and product information sheets are usually published as PDF documents. People can read them, but software cannot. The DRMD AI Generator creates DRMD XML files: a structured, machine-readable format based on the DRMD schema 1.0.0.
 
-- **Extraction:** The content of the PDF is read automatically and placed into a structured form.
+- **Three ways to work:** enter a DRMD by hand; convert PDF documents with AI, one at a time or a whole folder, and review and edit each result; or open an existing DRMD XML file, edit it and save it again. Manual entry and editing need no API key.
+- **Extraction:** With AI, the content of the PDF is read automatically and placed into a structured form.
 - **Review:** Every value can be located in the original PDF. Values that do not appear word for word in the document are marked for verification.
 - **Data enrichment:** Units are converted to the D-SI format, and identifiers are added, such as CAS Registry Numbers and InChIKeys for substances and ROR IDs for organisations.
 - **Validation:** Each document is checked against the DRMD schema and the official business rules before export.
 - **Single documents or whole folders:** Each document is saved as a DRMD XML file together with a readable HTML report.
-- **Built-in guidance:** Every field name in the generator links to the matching section of the DRMD Best Practice guide.
+- **Built-in guidance:** Every field name in the generator links to the matching section of the DRMD guidance document.
 
 ---
 
@@ -50,7 +51,7 @@ Reference material certificates and product information sheets are usually publi
 
 - Google Chrome 155 or Microsoft Edge 155, or a later version
 - An internet connection
-- An API key from one of the supported AI providers (see [AI providers](#ai-providers)). Usage is billed to the account the key belongs to.
+- For AI conversion only: an API key from one of the supported AI providers (see [AI providers](#ai-providers)). Usage is billed to the account the key belongs to. Entering a DRMD by hand and editing an XML file need no key.
 
 Nothing needs to be installed, and no administrator rights are required.
 
@@ -61,12 +62,15 @@ Nothing needs to be installed, and no administrator rights are required.
 1. Open the generator in Chrome or Edge, in one of two ways:
    - **Online:** go to <https://punitharumilli.github.io/DRMD_Generator/>
    - **As a file:** download **`DRMD-Generator.html`** from the [latest release](../../releases/latest) and open it, either by double-clicking it or by dragging it into a browser window.
-2. Click **Settings**, choose an AI provider and enter your API key. **Check key** confirms that the key works.
-3. Click **Upload PDF** to convert one document, or **Upload folder** to convert many. You can also drag a PDF, several PDFs or a folder onto the left side of the generator.
+2. The generator opens on **Home**, which describes the three ways of working:
+   - **Manual entry:** click **New DRMD** and fill in the tabs from **Administrative** to **Statements**.
+   - **AI-assisted conversion:** click **AI settings**, choose an AI provider and enter your API key; **Check key** confirms that the key works. Then click **Upload PDF** to convert one document, or **Upload folder** to convert many. You can also drag a PDF, several PDFs or a folder onto the left side of the generator.
+   - **Loading and editing:** click **Import XML** to open a DRMD XML file, edit it and save it again.
+3. Check and save the DRMD on **Validate & export**. For the next document, click **New DRMD**: the form and the PDF are cleared (the generator asks first).
 
-When you convert a folder, the browser asks once for permission to save into it. Choose **Allow**. The XML file and HTML report of each document are saved next to its PDF. When you drop a folder, the generator asks whether to save the results into the folder or to keep them in the tab (to download as a ZIP).
+When you convert a folder, the browser asks once for permission to save into it. Choose **Allow**. The extracted DRMD XML and HTML files are automatically exported to the same folder; your PDFs remain unchanged. Each PDF extraction is saved as soon as it is ready. Should a run halt unexpectedly, simply upload the same folder again: PDFs that have already been extracted are skipped. In the folder dialog, Windows lists only folders, not the PDFs inside them, and may say that no items match your search; select the folder and click **Select Folder**. When you drop a folder, the generator asks whether to save the results into the folder or to keep them in the tab (to download as a ZIP). Click a row of the folder results to see the validation report of that certificate; **Review** opens it in the form next to its PDF.
 
-If you upload a document before entering an API key, it waits: the generator opens **Settings**, checks the key as soon as you enter it, and starts the extraction by itself when the key works.
+If you upload a document before entering an API key, it waits: the generator opens **AI settings**, checks the key as soon as you enter it, and starts the extraction by itself when the key works.
 
 ---
 
@@ -75,7 +79,10 @@ If you upload a document before entering an API key, it waits: the generator ope
 - Click a field, or its locate button, to see where its value comes from: the place is marked in the PDF on the left.
 - When a value is not written in the PDF word for word, a short notice at the bottom of the PDF explains it (at the top, when the marked place is at the foot of the page), for example that the date "01 June 2020" is written as 2020-06-01 in the XML (ISO 8601), that a country code was derived from the address, or that the AI added part of an address that is not in the PDF. The notice closes after 10 seconds or as soon as you click or type anywhere. Values that are in the PDF word for word are only marked.
 - Information that is not in the certificate is left empty and is not written to the XML or the HTML report. If a required field stays empty, the generator reports it as an error, so it can be filled in before export.
-- Zoom the PDF with **−** and **+** above it, or with Ctrl and the mouse wheel, one small step at a time, from 50 % to 300 %. Click the percentage to see the whole page again.
+- Zoom the PDF with **−** and **+** above it, or with Ctrl and the mouse wheel, one small step at a time, from 50 % to 300 %. Click the percentage to see the whole page again. The **Enlarge** button shows the PDF in the whole window; Esc returns to the form.
+- Values the AI filled in that do not appear word for word in the PDF are outlined in amber: compare each with the PDF and click **Mark as verified**. Values you enter yourself, and the values of an opened XML file, are never marked. The locate buttons appear only when a PDF is shown.
+- The uncertainty, the coverage factor *k* and the coverage probability P of each row are checked as you type: a value that cannot be written to the XML is outlined in red, with a short note under it. P can be entered as 0.95 or as 95 %. An expanded uncertainty needs both *k* and P; leave both blank for a standard uncertainty.
+- On the **Documents** tab, the PDF marked **Human-readable PDF certificate** (or **… product information sheet**) is the one shown on the left. It is written first in the XML, under that name, as the guidance document recommends. Removing it clears the left side; attaching a PDF to a document that has none shows it. Another attached PDF can be marked instead.
 
 ### Units in D-SI
 
@@ -102,6 +109,15 @@ Every unit of a property table is also written in the D-SI unit format that the 
 - **Numbers.** Digit groups ("100 000", "0.000 12") are read as one number, and thousands separators beside a decimal mark ("1,234.5", "1.234,5") are removed; Validate & export shows each such value. "1,234" or "12,345" could be a decimal comma or a thousands separator: such a value is not written as a number, and Validate & export reports it as an error until it is entered with a decimal point.
 - The D-SI unit column can be edited. A unit typed there is checked against the rules (an invalid one is marked with the rule and its page, and reported in **Validate & export**). Changing the unit itself writes the D-SI unit again at once.
 - Click a D-SI unit to see where it comes from: the unit is marked in the PDF, and a notice explains how it was written, its quality class with the rules and pages, and opens the D-SI guide on Zenodo at the page of the rule.
+
+---
+
+## Validation, saving and signing
+
+- **Validate & export** has three parts: the **validation report**, the **DRMD XML** and the **HTML report**. The XML and the report can be unfolded to view them (**View**) and saved (**Save**).
+- Every change is checked at once against the DRMD 1.0.0 XML schema and the official business rules (Schematron). The report lists each finding as **Error** (must be corrected), **Check** (a rule that applies only in some cases) or **Note** (a hint); the bar at the bottom of the window shows the result at all times.
+- Nothing is stored on a server, and nothing is kept when the tab is closed. To continue later, save the XML and open it again with **Import XML**.
+- The generator does not sign or seal. Sign or seal the finished XML after saving it, with your organisation's signing software and certificate (an XML signature, `ds:Signature`). Any change after signing breaks the signature. See the chapter Digital signature of the guidance document.
 
 ---
 
@@ -136,7 +152,7 @@ The generator needs an AI model that reads both text and images (a multimodal mo
 
 ## Usage and costs
 
-Under **Settings**, the generator shows the AI requests made in the open tab: per model, the number of requests, the input and output tokens, the cost and the average time per request.
+Under **AI settings**, the generator shows the AI requests made in the open tab: per model, the number of requests, the input and output tokens, the cost and the average time per request.
 
 - The token counts are the numbers each provider reports in its answers. Nothing is estimated.
 - OpenRouter states the cost of each request in its answer; that amount is shown as it is. For Google, OpenAI, Anthropic, Mistral AI and Qwen, the cost is the reported tokens multiplied by the provider's published list price, as checked on 26 October 2026. A model that is not in the generator's price list shows "price not listed". For Qwen this applies to the US (Virginia) region, whose price depends on a workspace setting that the generator cannot see.
@@ -182,7 +198,7 @@ The generator connects to the internet only for these tasks. If your organisatio
 | ROR IDs of organisations | `api.ror.org` |
 | Opening the generator online (not needed for the file) | `punitharumilli.github.io` |
 
-Links to the DRMD Best Practice guide and the video guide open only when you click them. Without these addresses the form can still be filled in by hand, validated and exported.
+Links to the DRMD guidance document and the video guide open only when you click them. Without these addresses the form can still be filled in by hand, validated and exported.
 
 ---
 
@@ -215,7 +231,7 @@ Every three months, check for each provider that the recommended models are stil
 
 ## Documentation
 
-**DRMD Best Practice guide:** <https://punitharumilli.github.io/BestPracticeDocs/>
+**DRMD guidance document:** <https://punitharumilli.github.io/BestPracticeDocs/>
 
 The guide explains every element of the DRMD schema and its rules. You can also reach the relevant section directly by clicking any field name in the generator.
 
