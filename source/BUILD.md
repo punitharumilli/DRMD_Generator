@@ -29,6 +29,8 @@ The result is `dist/DRMD-Generator.html`. Copy it into the repository and push i
 | `src/types.ts` | The DRMD data model; `BinaryDocument` with the mark of the human-readable PDF (`rmDocument`) and its name in the XML (`rmDocumentName`) |
 | `src/utils/sourceForms.ts` | Other forms of a value to look for in the PDF (a date written out, a country by name or address) |
 | `src/utils/valueCheck.ts` | Checks the values the AI filled in against the PDF text; recognises values written in another form for machine readability (a coverage probability of 95 % as 0.95, a decimal comma, a country code, a D-SI unit) and finds where the PDF prints them |
+| `src/utils/sourceExplain.ts` | Where a value comes from in the PDF: the passage it was put together from and the words that differ, a contradiction, a value not found, or one the generator created; shown in the panel of the certificate pane |
+| `src/utils/periodCheck.ts` | Reads the period of validity from the certificate text ("valid for one year from the date of shipment") to check, correct and mark the period after dispatch |
 | `src/utils/formState.ts`, `src/utils/drmdFile.ts` | The form as it was saved, kept in a comment of the XML (printed units, an uncertainty still without k or P, PDF positions, values to verify and verification marks), and reading a file back: the saved form is used only when it gives exactly the XML of the file |
 | `vendor/pdfjs6/` | pdf.js 6.4.299 (official legacy build) and its WebAssembly decoders; `SOURCE.md` has the checksums and where they come from |
 | `build.mjs` | Builds the single file and its security policy; `connect-src` lists every server the page may contact. It refuses to build if a pdf.js file differs from the official one |
@@ -53,7 +55,7 @@ Run them after every change to `dsi.ts`, `xmlValues.ts` or `xmlGenerator.ts`. Wh
 npm run test:values
 ```
 
-`test/values-unit.cjs` checks which values count as converted for machine readability (and which do not), that the saved form gives exactly the same XML and the same validation findings again, and that a crafted comment cannot add fields, prototypes or links that are not web addresses. Run it after every change to `valueCheck.ts`, `formState.ts`, `drmdFile.ts` or `xmlGenerator.ts`.
+`test/source-unit.cjs` checks how the period of validity is read and where values come from in the PDF (the passage, the words that differ, a value not found, a UUID created by the generator). `test/values-unit.cjs` checks which values count as converted for machine readability (and which do not), that the saved form gives exactly the same XML and the same validation findings again, and that a crafted comment cannot add fields, prototypes or links that are not web addresses. Run them after every change to `valueCheck.ts`, `sourceExplain.ts`, `periodCheck.ts`, `formState.ts`, `drmdFile.ts` or `xmlGenerator.ts`.
 
 ## Every three months
 

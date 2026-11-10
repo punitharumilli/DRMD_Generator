@@ -25,6 +25,8 @@ import { openPdf, closePdf, isClosedDoc } from './utils/pdfjs';
 import { pdfPlainText } from './services/pdfPages';
 import { isIsoDate, dateForms, countryForms, addressForms, conversionReason, SourceKind } from './utils/sourceForms';
 import { PdfTextIndex, verifyNorm, buildPdfTextIndex, isInPdf, conversionOf, ValueKind, Conversion, valueKey } from './utils/valueCheck';
+import { Explanation, fromConversion, explainDerived, explainPeriod, explainValidityType, explainIdentifier } from './utils/sourceExplain';
+import { isoPeriod, periodWords } from './utils/periodCheck';
 
 
 
@@ -233,9 +235,11 @@ interface HighlightData {
 const CONVERTED_VALUE_PREFIX = "Converted for the XML";
 // An XML file whose saved form (formState.ts) no longer matches its XML.
 const CHANGED_SINCE_SAVED = 'This file was changed after the generator saved it, so it opens as its XML says. The printed units, PDF positions and verification marks saved with it are not used.';
-const GENERATED_VALUE_MESSAGE = "This value does not appear in the PDF. It was derived or added by the model, so please verify it.";
-const DERIVED_FROM_TEXT_MESSAGE = "Not word for word in the PDF. The marked text is what this value was derived from; please verify it.";
-const DERIVED_FROM_AREA_MESSAGE = "Not word for word in the PDF. The marked area is where this value was derived from; please verify it.";
+// Used only while the text of the PDF cannot be read (a scanned PDF): otherwise the source of a value
+// is explained from the PDF text (sourceOf in App, utils/sourceExplain.ts).
+const GENERATED_VALUE_MESSAGE = "The text of this PDF cannot be read (it may be scanned), so the source of this value cannot be marked. Compare it with the certificate.";
+const DERIVED_FROM_TEXT_MESSAGE = "Not word for word in the PDF: the marked text is the part of this value that is in the PDF. Check the rest against the certificate.";
+const DERIVED_FROM_AREA_MESSAGE = "The text of this PDF cannot be read (it may be scanned). The marked area is where the AI says it took this value from: compare it with the certificate.";
 // The same search for a document entered by hand or opened from an XML file: nothing was derived by a model.
 const NOT_FOUND_MESSAGE = "This value was not found word for word in the PDF text.";
 const PARTLY_FOUND_MESSAGE = "Not word for word in the PDF. The marked text is the closest match.";
@@ -583,9 +587,12 @@ const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: stri
         const v = String(value ?? '').trim();
         if (v) out.push({ tab, value: v, source: source ? String(source) : undefined, kind });
     };
+    // The period after dispatch, as the XML writes it (P1Y): checked against the period the PDF states.
+    if (d.administrativeData.validityType === 'Time After Dispatch')
+        add('admin', isoPeriod(d.administrativeData.durationY, d.administrativeData.durationM), undefined, 'period');
     d.administrativeData.producers.forEach(p => {
         const o: any = p.originalTexts || {};
-        add('admin', p.name, o.name); add('admin', p.email, o.email); add('admin', p.phone, o.phone); add('admin', p.fax, o.fax);
+        add('admin', p.name, o.name); add('admin', p.email, o.email); add('admin', p.phone, o.phone, 'phone'); add('admin', p.fax, o.fax, 'phone');
         add('admin', p.address.street, o.street); add('admin', p.address.streetNo, o.streetNo); add('admin', p.address.postCode, o.postCode);
         add('admin', p.address.city, o.city); add('admin', p.address.countryCode, o.countryCode, 'country');
     });
@@ -622,9 +629,14 @@ const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: stri
 };
 
 /** The review state of a document the AI has just filled in: all its values, none verified yet. */
+/** Total months of an ISO 8601 period as the generator writes it (P1Y6M). */
+const periodMonths = (iso: string) => { const m = iso.match(/^P(?:(\d+)Y)?(?:(\d+)M)?$/); return m ? Number(m[1] || 0) * 12 + Number(m[2] || 0) : 0; };
+
 const freshReview = (d: DRMD): ReviewState => ({
     aiFilled: Array.from(new Set(collectVerifiable(d).map(item => valueKey(item.value)).filter(Boolean))),
     verified: [],
+    // Corrections the rules made while the document was built (extractionPipeline.ts) are kept.
+    ...(d.review?.corrections?.length ? { corrections: d.review.corrections } : {}),
 });
 /** The document with its values marked as filled in by the AI. */
 const withFreshReview = (d: DRMD): DRMD => ({ ...d, review: freshReview(d) });
@@ -653,7 +665,7 @@ const PdfViewer: React.FC<{
     useEffect(() => { setShownHighlight(highlightData); }, [highlightData]);
     // Text of every page, read once per document (used for searching and for checking values).
     // Kept with the document it belongs to, so a late answer for a closed PDF is never used for the next one.
-    const pageTextsRef = useRef<{ doc: any; texts: { spaced: string; joined: string }[] } | null>(null);
+    const pageTextsRef = useRef<{ doc: any; texts: { spaced: string; joined: string; original: string }[] } | null>(null);
     const onTextIndexRef = useRef(onTextIndex);
     useEffect(() => { onTextIndexRef.current = onTextIndex; });
     const [pdfDoc, setPdfDoc] = useState<any>(null);
@@ -754,15 +766,16 @@ const PdfViewer: React.FC<{
         return () => { cancelled = true; closePdf(opened); };
     }, [url]);
 
-    const loadPageTexts = useCallback(async (doc: any): Promise<{ spaced: string; joined: string }[]> => {
+    const loadPageTexts = useCallback(async (doc: any): Promise<{ spaced: string; joined: string; original: string }[]> => {
         const cached = pageTextsRef.current;
         if (cached && cached.doc === doc) return cached.texts;
-        const texts: { spaced: string; joined: string }[] = [];
+        const texts: { spaced: string; joined: string; original: string }[] = [];
         for (let i = 1; i <= doc.numPages; i++) {
             const page = await doc.getPage(i);
             const tc = await page.getTextContent();
-            const spaced = pdfWords(tc.items).map(w => w.text).join(' ').toLowerCase();
-            texts.push({ spaced, joined: spaced.replace(/\s+/g, '') });
+            const original = pdfWords(tc.items).map(w => w.text).join(' ');
+            const spaced = original.toLowerCase();
+            texts.push({ spaced, joined: spaced.replace(/\s+/g, ''), original });
         }
         pageTextsRef.current = { doc, texts };
         return texts;
@@ -773,7 +786,7 @@ const PdfViewer: React.FC<{
         let cancelled = false;
         if (!pdfDoc) return;
         loadPageTexts(pdfDoc)
-            .then(texts => { if (!cancelled) onTextIndexRef.current?.(buildPdfTextIndex(texts.map(t => t.spaced))); })
+            .then(texts => { if (!cancelled) onTextIndexRef.current?.(buildPdfTextIndex(texts.map(t => t.original))); })
             .catch(err => { if (!cancelled && !isClosedDoc(pdfDoc)) console.warn('Could not read the PDF text:', err); });
         return () => { cancelled = true; };
     }, [pdfDoc, loadPageTexts]);
@@ -1242,7 +1255,8 @@ const App: React.FC = () => {
   // A source the notice cites (the D-SI guide for a D-SI unit), opened in a new tab
   const [toastLink, setToastLink] = useState<{ href: string; label: string } | null>(null);
   // A value converted for machine readability: the notice shows what the PDF prints and what the XML writes.
-  const [toastConversion, setToastConversion] = useState<Conversion | null>(null);
+  // The notice explains where a value comes from: what the PDF prints, what the form or XML has, and why.
+  const [toastExplain, setToastExplain] = useState<Explanation | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const xmlInputRef = useRef<HTMLInputElement>(null);
@@ -1497,7 +1511,7 @@ const App: React.FC = () => {
   const toastRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
       if (!toastMessage) return;
-      const timer = toastConversion ? undefined : setTimeout(() => setToastMessage(null), 10000);
+      const timer = toastExplain ? undefined : setTimeout(() => setToastMessage(null), 10000);
       const dismiss = (e: Event) => {
           if (toastRef.current && e.target instanceof Node && toastRef.current.contains(e.target)) return;
           setToastMessage(null);
@@ -1512,7 +1526,7 @@ const App: React.FC = () => {
           document.removeEventListener('pointerdown', dismiss, true);
           document.removeEventListener('keydown', dismiss, true);
       };
-  }, [toastMessage, toastConversion]);
+  }, [toastMessage, toastExplain]);
 
   // The notice sits at the bottom of the certificate pane. When the marked source lies under it
   // (an address at the foot of a page), it moves to the top of the pane, so the mark stays visible.
@@ -1535,25 +1549,27 @@ const App: React.FC = () => {
       return () => timers.forEach(clearTimeout);
   }, [toastMessage]);
 
-  const showToast = (message: string, type: 'converted' | 'generated' | 'warning', link?: { href: string; label: string }, conversion?: Conversion) => {
+  const showToast = (message: string, type: 'converted' | 'generated' | 'warning', link?: { href: string; label: string }, explain?: Explanation | Conversion) => {
       setToastMessage(message);
       setToastType(type);
       setToastLink(link ?? null);
-      setToastConversion(conversion ?? null);
+      setToastExplain(!explain ? null : 'tone' in explain ? explain : fromConversion(explain));
   };
+  /** The notice for an explanation of the PDF text a value comes from (see utils/sourceExplain.ts). */
+  const explanationText = (e: Explanation) => [e.title + '.', e.pdf ? `In the PDF: "${e.pdf}".` : '', e.form ? `In the form: "${e.form}".` : '', e.xml ? `In the XML: ${e.xml}.` : '', ...e.notes].filter(Boolean).join(' ');
+  const showExplanation = (e: Explanation, link?: { href: string; label: string }) => showToast(explanationText(e), e.tone === 'converted' ? 'converted' : 'generated', link, e);
   /** The notice of a value converted for machine readability, as one sentence (and for screen readers). */
   const conversionText = (c: Conversion) => c.printed
       ? `${CONVERTED_VALUE_PREFIX}: "${c.printed}" → "${c.written}". ${c.reason}`
       : `${CONVERTED_VALUE_PREFIX}: written as "${c.written}". ${c.reason}`;
-  const showConversion = (c: Conversion, link?: { href: string; label: string }) => showToast(conversionText(c), 'converted', link, c);
 
   // While a D-SI unit (or another converted value) is shown in the PDF, its own notice replaces the
   // general ones of the search (its XML form is never in the PDF word for word: the notice explains the conversion).
-  type SourceNotice = { text: string; link?: { href: string; label: string }; conversion?: Conversion };
+  type SourceNotice = { text: string; link?: { href: string; label: string }; conversion?: Conversion; explain?: Explanation };
   const sourceNoticeRef = useRef<SourceNotice | null>(null);
   const sourceToast = (message: string, type: 'converted' | 'generated' | 'warning', conversion?: Conversion) => {
       const n = sourceNoticeRef.current;
-      if (n) showToast(n.text, 'converted', n.link, n.conversion);
+      if (n) showToast(n.text, n.explain && n.explain.tone !== 'converted' ? 'generated' : 'converted', n.link, n.explain ?? n.conversion);
       else showToast(message, type, undefined, conversion);
   };
   const convertedToast = (c: Conversion) => sourceToast(conversionText(c), 'converted', c);
@@ -1606,8 +1622,58 @@ const App: React.FC = () => {
       }
   };
 
+  /** The page (1-based) whose text holds `text`, the page asked for first; 0 when none does. */
+  const pageWithText = (text: string, idx: PdfTextIndex, page?: number): number => {
+      const q = verifyNorm(text).replace(/(\d),(?=\d)/g, '$1.');
+      if (!q) return 0;
+      const has = (i: number) => verifyNorm(idx.original[i]).replace(/(\d),(?=\d)/g, '$1.').includes(q);
+      if (page && page >= 1 && page <= idx.original.length && has(page - 1)) return page;
+      for (let i = 0; i < idx.original.length; i++) if (has(i)) return i + 1;
+      return 0;
+  };
+
+  /**
+   * Where a value of the form comes from, read from the text of the PDF: 'verbatim' when it is there
+   * word for word, otherwise an explanation (converted for machine readability, put together from a
+   * passage, or not found) with the text to mark. Null when the PDF has no text to read yet.
+   */
+  const sourceOf = (value: string, originalText: string | undefined, kind: SourceKind | undefined, page: number | undefined,
+                    opts?: { address?: { city?: string; postCode?: string }; name?: string; line?: string; verifyKind?: ValueKind }): 'verbatim' | Explanation | null => {
+      const idx = pdfIndex;
+      if (!idx || !idx.hasText || !value) return null;
+      const byAi = isAiDocRef.current;
+      const original = (originalText || '').trim();
+      const markOf = (text: string) => { const pg = pageWithText(text, idx, page); return pg ? { text, page: pg } : undefined; };
+      if (kind === 'date') {
+          const found = [original, ...dateForms(value)].find(f => f && isInPdf(f, idx));
+          if (found && verifyNorm(found) !== verifyNorm(value)) return { tone: 'converted', title: 'Converted for machine readability', pdf: found, xml: value, notes: [conversionReason('date').trim()], mark: markOf(found) };
+      }
+      if (kind === 'country') {
+          const isName = (f: string) => !/\d/.test(f) && f.length > 2 && !(drmdData.administrativeData.producers || []).some(p => sameText(p.address.city, f));
+          const found = [original, ...countryForms(value, opts?.address)].find(f => f && isInPdf(f, idx));
+          if (found && isName(found)) return { tone: 'converted', title: 'Converted for machine readability', pdf: found, xml: value, notes: [conversionReason('country').trim()], mark: markOf(found) };
+          if (found) return { tone: 'derived', title: 'Derived from the address', pdf: found, form: value, notes: [`“${value}” is not written in the PDF: the country was derived from the address marked here. ${conversionReason('country').trim()} Please check it.`], mark: markOf(found) };
+      }
+      if (isInPdf(value, idx)) return 'verbatim';
+      if (kind === 'address') {
+          const found = addressForms(opts?.address, opts?.name, opts?.line).find(f => f && isInPdf(f, idx));
+          if (found) return { tone: 'derived', title: 'Added to the address', pdf: found, form: value, notes: [`“${value}” is not written in the PDF: the AI added it to the address marked here. Please check it.`], mark: markOf(found) };
+      }
+      if (opts?.verifyKind) {
+          const c = conversionOf(value, opts.verifyKind, idx, page);
+          if (c) return fromConversion(c);
+      }
+      // The AI named the words of the PDF it took the value from.
+      if (original && verifyNorm(original) !== verifyNorm(value) && isInPdf(original, idx)) {
+          const e = explainDerived(value, idx, page, byAi);
+          return { ...e, tone: 'derived', title: 'Not word for word in the PDF', pdf: original, mark: markOf(original),
+                   notes: e.tone === 'derived' ? e.notes : [byAi ? 'The AI gave the marked text as the source of this value: check that the value says the same.' : 'The marked text is given as the source of this value.'] };
+      }
+      return explainDerived(value, idx, page, byAi);
+  };
+
   const handleHighlight = (primaryTarget?: number[] | string | null, secondaryTarget?: number[] | string | null, textFallback?: string, originalText?: string,
-                           opts?: { kind?: SourceKind; address?: { city?: string; postCode?: string }; name?: string; line?: string; notice?: SourceNotice }) => {
+                           opts?: { kind?: SourceKind; address?: { city?: string; postCode?: string }; name?: string; line?: string; notice?: SourceNotice; verifyKind?: ValueKind; explain?: Explanation | null }) => {
       setToastMessage(null);
       sourceNoticeRef.current = opts?.notice ?? null;
       highlightFallbackRef.current = Array.isArray(secondaryTarget) && secondaryTarget.length === 5 ? normalizeCoords(secondaryTarget) : null;
@@ -1616,6 +1682,47 @@ const App: React.FC = () => {
       // Dates are recognised by their form; a country code is marked as such by its field.
       const kind = opts?.kind ?? (isIsoDate(value) ? 'date' : undefined);
       conversionRef.current = value ? { value, kind } : null;
+
+      // The text of the PDF decides where a value comes from; the AI's areas are only a hint (the
+      // page to look on first, and what to mark when the PDF text has nothing).
+      if (!opts?.notice) {
+          const primary = Array.isArray(primaryTarget) && primaryTarget.length === 5 ? normalizeCoords(primaryTarget) : null;
+          const area = primary || highlightFallbackRef.current;
+          const src = opts?.explain ?? sourceOf(value, originalText, kind, area?.[0], opts);
+          if (src === 'verbatim') {
+              // A short value occurs in many places: the AI's area tells which one.
+              if (primary && verifyNorm(value).length < 4) { setHighlightData({ type: 'coords', value: primary }); return; }
+              // A text whose sentences are each in the PDF, in different places: the first is marked.
+              const whole = verifyNorm(value).replace(/(\d),(?=\d)/g, '$1.');
+              if (pdfIndex && !pdfIndex.joined.includes(whole)) {
+                  const parts = value.split(/[;:\n]+|\.\s+/).map(t => t.trim()).filter(t => verifyNorm(t).length >= 12);
+                  const first = parts.find(t => pageWithText(t, pdfIndex, area?.[0]));
+                  if (first) {
+                      const e: Explanation = { tone: 'derived', title: 'In the PDF in several places', pdf: first, form: value,
+                          notes: [`Each sentence of this value is in the PDF word for word, but not in one place (${parts.length} parts). The first is marked.`],
+                          mark: { text: first, page: pageWithText(first, pdfIndex, area?.[0]) } };
+                      sourceNoticeRef.current = { text: explanationText(e), explain: e };
+                      setHighlightData({ type: 'text', value: first, page: e.mark!.page });
+                      showExplanation(e);
+                      return;
+                  }
+              }
+              setHighlightData({ type: 'text', value, page: area?.[0] });
+              return;
+          }
+          if (src) {
+              let e = src;
+              if (!e.mark && area && e.tone === 'notFound' && isAiDocRef.current)
+                  e = { ...e, notes: [...e.notes, 'The marked area is where the AI says it took the value from.'] };
+              sourceNoticeRef.current = { text: explanationText(e), explain: e };
+              highlightFallbackRef.current = null;
+              if (e.mark) setHighlightData({ type: 'text', value: e.mark.text, page: e.mark.page });
+              else if (area) setHighlightData({ type: 'coords', value: area });
+              else setHighlightData(null);
+              showExplanation(e);
+              return;
+          }
+      }
       const converted = kind === 'date' || kind === 'country';
       const reason = converted ? ` ${conversionReason(kind)}` : '';
       const verbatim = !value || !pdfIndex || !pdfIndex.hasText || isInPdf(value, pdfIndex);
@@ -1895,21 +2002,32 @@ const App: React.FC = () => {
    * PDF prints it, and the notice says what it was converted into and why.
    */
   const showCellSource = (raw: unknown, kind: ValueKind, res: MeasurementResult) => {
-      const page = Array.isArray(res.sectionCoordinates) && res.sectionCoordinates.length === 5 ? res.sectionCoordinates[0] : undefined;
-      const c = conversionOf(raw, kind, pdfIndex, page);
-      if (!c) { handleHighlight(res.sectionCoordinates, null, res.name); return; }
-      const notice = { text: conversionText(c), conversion: c };
-      if (!c.mark) {
-          handleHighlight(res.sectionCoordinates, null, res.name, undefined, { notice });
-          showConversion(c);
-          return;
-      }
+      const area = Array.isArray(res.sectionCoordinates) && res.sectionCoordinates.length === 5 ? normalizeCoords(res.sectionCoordinates) : null;
+      const page = area?.[0];
+      const value = String(raw ?? '').trim();
+      const c = conversionOf(value, kind, pdfIndex, page);
       setToastMessage(null);
-      sourceNoticeRef.current = notice;
+      sourceNoticeRef.current = null;
       highlightFallbackRef.current = null;
       conversionRef.current = null;
-      setHighlightData({ type: 'text', value: c.mark.text, page: c.mark.page });
-      showConversion(c);
+      const markArea = () => { if (area) setHighlightData({ type: 'coords', value: area }); else if (res.name) setHighlightData({ type: 'text', value: res.name }); };
+      if (c) {
+          const e = fromConversion(c);
+          sourceNoticeRef.current = { text: explanationText(e), explain: e };
+          if (c.mark) setHighlightData({ type: 'text', value: c.mark.text, page: c.mark.page }); else markArea();
+          showExplanation(e);
+          return;
+      }
+      // Not in the PDF and not a conversion: say so, and mark the passage it may come from, or its table.
+      if (value && pdfIndex?.hasText && !isInPdf(value, pdfIndex)) {
+          let e = explainDerived(value, pdfIndex, page, isAiDocRef.current);
+          if (!e.mark && area) e = { ...e, notes: [...e.notes, 'The marked area is the table this row belongs to.'] };
+          sourceNoticeRef.current = { text: explanationText(e), explain: e };
+          if (e.mark) setHighlightData({ type: 'text', value: e.mark.text, page: e.mark.page }); else markArea();
+          showExplanation(e);
+          return;
+      }
+      markArea();
   };
 
   // ---- A PDF or folder chosen before an API key was entered ----
@@ -2855,12 +2973,31 @@ const App: React.FC = () => {
   };
 
   // The period exactly as the XML generator writes it (whole, non-negative years and months).
-  const getIsoDuration = () => {
-      const y = Math.max(0, Math.floor(Number(drmdData.administrativeData.durationY) || 0));
-      const m = Math.max(0, Math.floor(Number(drmdData.administrativeData.durationM) || 0));
-      if (!y && !m) return "P0Y";
-      return `P${y ? y + 'Y' : ''}${m ? m + 'M' : ''}`;
+  const getIsoDuration = () => isoPeriod(Number(drmdData.administrativeData.durationY) || 0, Number(drmdData.administrativeData.durationM) || 0);
+
+  // The period of validity and the identifier, explained from the PDF text (utils/sourceExplain.ts).
+  const showPeriodSource = () => {
+      const ad = drmdData.administrativeData;
+      handleHighlight(ad.fieldCoordinates?.durationY || ad.fieldCoordinates?.durationM, null, getIsoDuration(), undefined,
+          { explain: pdfIndex?.hasText ? explainPeriod(ad.durationY, ad.durationM, pdfIndex, isAiDoc) : null });
   };
+  const showValiditySource = () => {
+      const ad = drmdData.administrativeData;
+      if (ad.validityType === 'Specific Time') { handleHighlight(ad.fieldCoordinates?.specificTime, ad.fieldCoordinates?.validityType, ad.specificTime, ad.originalTexts?.specificTime); return; }
+      handleHighlight(ad.fieldCoordinates?.validityType, null, ad.validityType, ad.originalTexts?.validityType,
+          { explain: pdfIndex?.hasText ? explainValidityType(ad.validityType, ad.durationY, ad.durationM, pdfIndex, isAiDoc) : null });
+  };
+  const showIdentifierSource = () => {
+      const ad = drmdData.administrativeData;
+      handleHighlight(ad.fieldCoordinates?.uniqueIdentifier, null, ad.uniqueIdentifier, ad.originalTexts?.uniqueIdentifier,
+          { explain: pdfIndex?.hasText ? explainIdentifier(ad.uniqueIdentifier, pdfIndex) : null });
+  };
+  // A period the rules corrected from the PDF, while the form still has the corrected value.
+  const periodCorrection = (() => {
+      const c = (drmdData.review?.corrections || []).find(x => x.field === 'Period after dispatch');
+      const now = isoPeriod(Number(drmdData.administrativeData.durationY) || 0, Number(drmdData.administrativeData.durationM) || 0);
+      return c && drmdData.administrativeData.validityType === 'Time After Dispatch' && periodWords(periodMonths(now)) === c.to ? c : null;
+  })();
 
   const renderSettings = () => (
       <div>
@@ -3064,7 +3201,7 @@ const App: React.FC = () => {
                 <Select label="Title of document *" value={drmdData.administrativeData.title} options={ALLOWED_TITLES} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, title: v}}))} />
                 <div className="flex gap-1.5 items-end">
                     <div className="flex-1 min-w-0">
-                        <Input mono noVerify label="Unique identifier *" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onFocus={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.uniqueIdentifier, null, drmdData.administrativeData.uniqueIdentifier, drmdData.administrativeData.originalTexts?.uniqueIdentifier)} source={drmdData.administrativeData.originalTexts?.uniqueIdentifier} onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.uniqueIdentifier, null, drmdData.administrativeData.uniqueIdentifier, drmdData.administrativeData.originalTexts?.uniqueIdentifier)} />
+                        <Input mono noVerify label="Unique identifier *" value={drmdData.administrativeData.uniqueIdentifier} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: v}}))} onFocus={showIdentifierSource} source={drmdData.administrativeData.originalTexts?.uniqueIdentifier} onInfoClick={showIdentifierSource} />
                     </div>
                     <button onClick={() => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, uniqueIdentifier: generateUUID()}}))} className="btn-secondary w-8 px-0" title="Generate a new UUID" aria-label="Generate a new UUID"><Icon name="refresh" /></button>
                 </div>
@@ -3078,8 +3215,8 @@ const App: React.FC = () => {
                     value={drmdData.administrativeData.validityType}
                     options={["Until Revoked", "Time After Dispatch", "Specific Time"]}
                     onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, validityType: v as any}}))}
-                    onFocus={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.validityType, null, drmdData.administrativeData.validityType, drmdData.administrativeData.originalTexts?.validityType)}
-                    onInfoClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.validityType, null, drmdData.administrativeData.validityType, drmdData.administrativeData.originalTexts?.validityType)}
+                    onFocus={showValiditySource}
+                    onInfoClick={showValiditySource}
                 />
 
                 {drmdData.administrativeData.validityType === "Time After Dispatch" && (
@@ -3087,26 +3224,17 @@ const App: React.FC = () => {
                         <fieldset>
                             <legend className="field-label mb-1"><LabelText label="Period after dispatch *" /></legend>
                         <div className="grid grid-cols-2 gap-3">
-                            <Input label="Years" type="number" value={drmdData.administrativeData.durationY} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, durationY: parseInt(v) || 0}}))} />
-                            <Input label="Months" type="number" value={drmdData.administrativeData.durationM} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, durationM: parseInt(v) || 0}}))} />
+                            <Input label="Years" type="number" value={drmdData.administrativeData.durationY} onFocus={showPeriodSource} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, durationY: parseInt(v) || 0}}))} />
+                            <Input label="Months" type="number" value={drmdData.administrativeData.durationM} onFocus={showPeriodSource} onChange={(v) => setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, durationM: parseInt(v) || 0}}))} />
                         </div>
+                        {periodCorrection && (
+                            <p className="mt-1.5 hint" data-testid="period-correction">
+                                Corrected by the rules from {periodCorrection.from} to {periodCorrection.to}: the PDF says “{periodCorrection.source}”.
+                            </p>
+                        )}
                         </fieldset>
                         <div className="space-y-3">
-                            <div className="w-full">
-                                <div className="flex items-center justify-between gap-2 mb-1 min-h-[18px]">
-                                    <span className="field-label"><DocsLabel label="ISO 8601 format">ISO 8601 period</DocsLabel></span>
-                                    {pdfUrl && <button
-                                        type="button"
-                                        className="-my-1 inline-flex items-center justify-center w-6 h-6 rounded text-ink-faint hover:text-petrol-600 hover:bg-petrol-50"
-                                        onClick={() => handleHighlight(drmdData.administrativeData.fieldCoordinates?.durationM || drmdData.administrativeData.fieldCoordinates?.durationY, null, getIsoDuration())}
-                                        title="Show the duration in the PDF"
-                                        aria-label="Show the duration in the PDF"
-                                    >
-                                        <Icon name="locate" size={14} />
-                                    </button>}
-                                </div>
-                                <div className="computed" title="Written to the XML">{getIsoDuration()}</div>
-                            </div>
+                            <PeriodField iso={getIsoDuration()} onLocate={showPeriodSource} />
                             <Input
                                 label="Dispatch date"
                                 type="date"
@@ -3159,8 +3287,8 @@ const App: React.FC = () => {
                             <Input label="Name *" value={prod.name} docs={DOCS_PATHS.producerName} onFocus={() => handleHighlight(prod.fieldCoordinates?.name, prod.sectionCoordinates, prod.name, prod.originalTexts?.name)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].name = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.name} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.name, prod.sectionCoordinates, prod.name, prod.originalTexts?.name)} />
                             <Input label="Email" value={prod.email} onFocus={() => handleHighlight(prod.fieldCoordinates?.email, prod.sectionCoordinates, prod.email, prod.originalTexts?.email)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].email = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.email} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.email, prod.sectionCoordinates, prod.email, prod.originalTexts?.email)} />
                             <div className="grid grid-cols-2 gap-3">
-                                <Input label="Phone" value={prod.phone} onFocus={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone, prod.originalTexts?.phone)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].phone = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.phone} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone, prod.originalTexts?.phone)} />
-                                <Input label="Fax" value={prod.fax} onFocus={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax, prod.originalTexts?.fax)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].fax = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.fax} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax, prod.originalTexts?.fax)} />
+                                <Input label="Phone" value={prod.phone} onFocus={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone, prod.originalTexts?.phone, { verifyKind: 'phone' })} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].phone = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.phone} verifyKind="phone" onInfoClick={() => handleHighlight(prod.fieldCoordinates?.phone, prod.sectionCoordinates, prod.phone, prod.originalTexts?.phone, { verifyKind: 'phone' })} />
+                                <Input label="Fax" value={prod.fax} onFocus={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax, prod.originalTexts?.fax, { verifyKind: 'phone' })} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].fax = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.fax} verifyKind="phone" onInfoClick={() => handleHighlight(prod.fieldCoordinates?.fax, prod.sectionCoordinates, prod.fax, prod.originalTexts?.fax, { verifyKind: 'phone' })} />
                             </div>
                         </div>
                         <fieldset className="space-y-3">
@@ -3553,7 +3681,7 @@ const App: React.FC = () => {
                                                     <React.Fragment key={q.uuid}>
                                                     <tr className="hover:bg-sunken/70 [&>td]:align-top">
                                                         <td className="p-1 relative">
-                                                            <CellInput ariaLabel="Quantity name" value={q.name} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = val; setDrmdData(p => ({...p, properties: list})); }} />
+                                                            <CellInput ariaLabel="Quantity name" value={q.name} onFocus={() => handleHighlight(null, res.sectionCoordinates, q.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].name = val; setDrmdData(p => ({...p, properties: list})); }} />
                                                         </td>
                                                         <td className="p-1">
                                                             <div className="flex items-start gap-1">
@@ -3616,7 +3744,7 @@ const App: React.FC = () => {
                                                                 }}
                                                             />
                                                         </td>
-                                                        <td className="p-1"><CellInput ariaLabel="Coverage factor k" align="right" problem={unc.k} placeholder={unc.k ? 'e.g. 2' : undefined} value={q.coverageFactor} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        <td className="p-1"><CellInput ariaLabel="Coverage factor k" align="right" problem={unc.k} placeholder={unc.k ? 'e.g. 2' : undefined} value={q.coverageFactor} onFocus={() => showCellSource(q.coverageFactor, 'number', res)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
                                                         <td className="p-1"><CellInput ariaLabel="Coverage probability" align="right" problem={unc.p} placeholder={unc.p ? '0.95' : undefined} title={pXml ? `Written to the XML as ${pXml}` : 'Coverage probability P: 0.95 or 95 %'} verifyKind="probability" value={q.coverageProbability} onFocus={() => showCellSource(q.coverageProbability, 'probability', res)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
                                                         <td className="text-center"><button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities.splice(qIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="icon-btn-danger w-6 h-6" title="Remove row" aria-label="Remove row"><Icon name="x" size={14} /></button></td>
                                                     </tr>
@@ -4106,6 +4234,16 @@ const App: React.FC = () => {
                         ) : (
                             <p className="px-4 py-3 text-sm text-ink inline-flex items-center gap-2"><Icon name="check" size={15} className="text-ok" /> Every value the AI filled in was found in the PDF or verified by you.</p>
                         )}
+                        {(drmdData.review?.corrections || []).length > 0 && (
+                            <div className="px-4 py-3 border-t border-line-soft" data-testid="rule-corrections">
+                                <p className="text-sm font-semibold text-ink">Corrected by the rules from the PDF</p>
+                                <ul className="mt-1 space-y-1 text-sm text-ink-soft">
+                                    {(drmdData.review?.corrections || []).map((c, i) => (
+                                        <li key={i}>{c.field}: the AI wrote {c.from}, the PDF says “{c.source}”, so {c.to} is used.</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
                         <p className="px-4 py-2 border-t border-line-soft hint">
                             About the content the AI read; it does not change whether the XML is valid. Values written in another form for machine readability, such as a coverage probability of 95 % as 0.95, a decimal comma, a date, a country code or a D-SI unit, are not counted: click one to see where it is printed and what it was converted into.
                         </p>
@@ -4472,22 +4610,29 @@ const App: React.FC = () => {
                  toastType === 'converted' ? 'border-petrol-600' : toastType === 'generated' ? 'border-check' : 'border-note'
              }`} role="status">
                  <Icon name={toastType === 'converted' ? 'refresh' : 'alert'} className={`mt-0.5 shrink-0 ${toastType === 'converted' ? 'text-petrol-600' : 'text-check'}`} />
-                 {toastConversion ? (
-                   // A value converted for machine readability: what the PDF prints, what the XML writes, and why.
-                   <div className="flex-1 min-w-0 text-sm text-ink" data-testid="conversion-panel" aria-label={toastMessage}>
-                     <p className="font-semibold">Converted for machine readability</p>
-                     <p className="mt-1">
-                       {toastConversion.printed
-                         ? <>“<span className="font-medium" data-testid="conversion-printed">{toastConversion.printed}</span>” in the PDF is written as </>
-                         : <>The XML writes this as </>}
-                       <code className="px-1 py-px rounded-sm bg-petrol-50 text-petrol-800 font-mono text-xs break-all" data-testid="conversion-written">{toastConversion.written}</code>.
-                     </p>
-                     <p className="mt-1 text-ink-soft">
-                       {toastConversion.reason}
-                       {toastLink && safeHttpUrl(toastLink.href) && (
-                         <> <a href={safeHttpUrl(toastLink.href)} target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">{toastLink.label}</a></>
-                       )}
-                     </p>
+                 {toastExplain ? (
+                   // Where the value comes from: the text of the PDF (marked), the value in the form or
+                   // XML, and what differs or why it is written so (utils/sourceExplain.ts).
+                   <div className="flex-1 min-w-0 text-sm text-ink max-h-[42vh] overflow-y-auto" data-testid="source-panel" data-tone={toastExplain.tone} aria-label={toastMessage}>
+                     <p className="font-semibold" data-testid="panel-title">{toastExplain.title}</p>
+                     <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                       {toastExplain.pdf && <>
+                         <dt className="text-ink-muted whitespace-nowrap">{toastExplain.mark ? 'In the PDF (marked)' : 'In the PDF'}</dt>
+                         <dd className="min-w-0 break-words" data-testid="panel-pdf">“{toastExplain.pdf.length > 420 ? toastExplain.pdf.slice(0, 420) + '…' : toastExplain.pdf}”</dd>
+                       </>}
+                       {toastExplain.form && <>
+                         <dt className="text-ink-muted whitespace-nowrap">In the form</dt>
+                         <dd className="min-w-0 break-words font-medium" data-testid="panel-form">“{toastExplain.form.length > 420 ? toastExplain.form.slice(0, 420) + '…' : toastExplain.form}”</dd>
+                       </>}
+                       {toastExplain.xml && <>
+                         <dt className="text-ink-muted whitespace-nowrap">In the XML</dt>
+                         <dd className="min-w-0"><code className="px-1 py-px rounded-sm bg-petrol-50 text-petrol-800 font-mono text-xs break-all" data-testid="panel-xml">{toastExplain.xml}</code></dd>
+                       </>}
+                     </dl>
+                     {toastExplain.notes.map((n, i) => <p key={i} className="mt-1.5 text-ink-soft" data-testid="panel-note">{n}</p>)}
+                     {toastLink && safeHttpUrl(toastLink.href) && (
+                       <p className="mt-1"><a href={safeHttpUrl(toastLink.href)} target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">{toastLink.label}</a></p>
+                     )}
                    </div>
                  ) : (
                  <span className="flex-1 text-sm text-ink">
@@ -5184,6 +5329,16 @@ const Input: React.FC<{ label: string; value: any; onChange: (v: string) => void
                 title={v.status === 'check' ? VERIFY_HINT : undefined}
                 className={`field-control ${mono ? 'text-sm tabular-nums' : ''} ${v.status === 'check' ? CHECK_FIELD : ''}`}
             />
+        </FieldShell>
+    );
+};
+
+/** The period after dispatch as the XML writes it (P1Y), checked against the period the PDF states. */
+const PeriodField: React.FC<{ iso: string; onLocate: () => void }> = ({ iso, onLocate }) => {
+    const v = useVerify(true, iso, undefined, () => {}, 'period');
+    return (
+        <FieldShell label="ISO 8601 period" docs="administrative_data/#315-validity-validity" onInfoClick={onLocate} verify={v.status} onVerifyToggle={v.toggle}>
+            <div className={`computed ${v.status === 'check' ? CHECK_FIELD : ''}`} data-testid="iso-period" title={v.status === 'check' ? VERIFY_HINT : 'Written to the XML'}>{iso}</div>
         </FieldShell>
     );
 };

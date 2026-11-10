@@ -13,6 +13,7 @@
  * Gemini requests (one per element) before the form was allowed to show anything, and those
  * requests used up the per-minute quota that the NEXT certificate's extraction needed.
  */
+import { validityStatements, checkPeriod, periodWords } from '../utils/periodCheck';
 import { countryNames } from '../utils/sourceForms';
 import { DRMD, INITIAL_DRMD, INITIAL_PERSON, INITIAL_ID, ALLOWED_TITLES, Identifier } from '../types';
 import { decideRorIdDetailed, decideChemicalIdentifiersDetailed, convertUnitsWithAi, UnitQuestion } from './llmService';
@@ -629,7 +630,7 @@ export const mapExtractedToDrmd = (rawExtracted: Partial<DRMD>, fileName: string
         }
     }
 
-    return {
+    const doc: DRMD = {
         ...prev,
         administrativeData: {
             ...prev.administrativeData,
@@ -674,6 +675,31 @@ export const mapExtractedToDrmd = (rawExtracted: Partial<DRMD>, fileName: string
             // The certificate itself: the human-readable PDF of this DRMD
             rmDocument: true
         }]
+    };
+    return checkValidityPeriod(doc, pdfText);
+};
+
+/**
+ * The period after dispatch, checked against the PDF by the rules. When the certificate states one
+ * period of validity ("valid for one year from the date of shipment") and the AI wrote another, the
+ * period of the PDF is used, and the correction is recorded so the user sees it. Several different
+ * periods in the PDF are left to the user (the field is marked for verification).
+ */
+const checkValidityPeriod = (doc: DRMD, pdfText: string): DRMD => {
+    const ad = doc.administrativeData;
+    if (ad.validityType !== 'Time After Dispatch' || !pdfText) return doc;
+    const total = (Number(ad.durationY) || 0) * 12 + (Number(ad.durationM) || 0);
+    const check = checkPeriod(total, validityStatements(pdfText));
+    if (check.result !== 'differs') return doc;
+    const s = check.statement;
+    const correction = { field: 'Period after dispatch', from: total ? periodWords(total) : 'none', to: periodWords(s.months), source: s.text };
+    return {
+        ...doc,
+        administrativeData: {
+            ...ad, durationY: Math.floor(s.months / 12), durationM: s.months % 12,
+            originalTexts: { ...(ad.originalTexts || {}), durationY: s.text, durationM: s.text },
+        },
+        review: { aiFilled: doc.review?.aiFilled || [], verified: doc.review?.verified || [], corrections: [...(doc.review?.corrections || []), correction] },
     };
 };
 
