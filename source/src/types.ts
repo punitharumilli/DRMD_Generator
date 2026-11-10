@@ -177,6 +177,16 @@ export interface DRMD {
 export interface ReviewState {
     aiFilled: string[];
     verified: string[];
+    /** Values the rules corrected from the text of the PDF (the AI had written another value). */
+    corrections?: ReviewCorrection[];
+}
+
+export interface ReviewCorrection {
+    field: string;
+    from: string;
+    to: string;
+    /** The words of the PDF the correction is based on. */
+    source: string;
 }
 
 /** A file embedded in the XML as drmd:document (dcc:byteDataType). */

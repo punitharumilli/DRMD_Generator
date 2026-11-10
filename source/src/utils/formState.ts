@@ -3,7 +3,7 @@
 
 import {
     DRMD, Identifier, Producer, ResponsiblePerson, Material, MaterialProperty, MeasurementResult, Quantity,
-    CustomStatement, ReviewState, Comment, AdditionalDocument,
+    CustomStatement, ReviewState, ReviewCorrection, Comment, AdditionalDocument,
 } from '../types';
 import { safeHttpUrl } from './safeUrl';
 import { VALUE_KEY } from './valueCheck';
@@ -153,10 +153,14 @@ const STATEMENTS = ['intendedUse', 'commutability', 'storageInformation', 'handl
     'healthAndSafety', 'subcontractors', 'legalNotice', 'referenceToCertificationReport'] as const;
 
 const keys = (v: unknown): string[] => Array.from(new Set(list(v, x => (typeof x === 'string' && VALUE_KEY.test(x) ? x : '')).filter(Boolean)));
+const correction = (v: unknown): ReviewCorrection => { const o = obj(v); return { field: str(o.field), from: str(o.from), to: str(o.to), source: str(o.source) }; };
 export const reviewOfState = (v: unknown): ReviewState | undefined => {
     if (!v || typeof v !== 'object') return undefined;
     const o = obj(v);
-    return { aiFilled: keys(o.aiFilled), verified: keys(o.verified) };
+    const review: ReviewState = { aiFilled: keys(o.aiFilled), verified: keys(o.verified) };
+    const corrections = list(o.corrections, correction).slice(0, 100).filter(c => c.field && c.to);
+    if (corrections.length) review.corrections = corrections;
+    return review;
 };
 
 /** The form fields of a document (everything but the embedded files), with their types checked. */

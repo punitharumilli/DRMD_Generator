@@ -15,7 +15,7 @@
     "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:dsi": "node test/dsi-unit.cjs && node test/dsi-matrix.cjs && node test/rpm-unit.cjs && python3 -I test/dsi-xcheck.py",
-    "test:values": "node test/values-unit.cjs"
+    "test:values": "node test/values-unit.cjs && node test/source-unit.cjs"
   },
   "dependencies": {
     "@google/genai": "1.52.0",
