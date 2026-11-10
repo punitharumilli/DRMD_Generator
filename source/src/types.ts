@@ -165,6 +165,18 @@ export interface DRMD {
     // New fields for the "Comment and Document" tab
     generalComment: string;
     binaryDocuments: BinaryDocument[];
+    /** Set for a document the AI filled in: which of its values are checked against the PDF. */
+    review?: ReviewState;
+}
+
+/**
+ * The values the AI filled in, and those of them the user has verified against the PDF (or typed
+ * over), as keys of their normalised text (utils/valueCheck.ts). It belongs to the document, so a
+ * saved file opens again with the same values to verify and the same marks.
+ */
+export interface ReviewState {
+    aiFilled: string[];
+    verified: string[];
 }
 
 /** A file embedded in the XML as drmd:document (dcc:byteDataType). */

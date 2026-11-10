@@ -4,14 +4,14 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import { 
     DRMD, INITIAL_PRODUCER, INITIAL_PERSON, INITIAL_ID, INITIAL_QUANTITY, ALLOWED_TITLES, BulkResult, Identifier, Quantity, MeasurementResult, MaterialProperty,
-    BinaryDocument, rmDocumentName, isPdfDocument
+    BinaryDocument, rmDocumentName, isPdfDocument, ReviewState
 } from './types';
 import { extractStructuredDataFromPdf, clearQuotaMemory, ExtractionReport } from './services/llmService';
 import { mapExtractedToDrmd, resolveIdentifiers, applyIdentifierPatch, createInitialDrmd, generateUUID, lookUpRorAgain, lookUpChemicalAgain, lookUpChemicalsAgain, materialLookupContext, chemKey, refineUnitsWithAi, applyUnitPatch, needsUnitAi, unitContextTexts } from './services/extractionPipeline';
 import { generateDrmdXml } from './utils/xmlGenerator';
 import { convertToDSI, getDsiPreview, dsiFor } from './utils/unitConverter';
 import { checkDsi, explainDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, guidePageUrl, DsiClass, DSI_CLASS_LABEL, DSI_CLASS_MEANING, DSI_CLASS_PAGE } from './utils/dsi';
-import { parseDrmdXml } from './utils/xmlParser';
+import { readDrmdXml } from './utils/drmdFile';
 import { validateDrmd } from './utils/validator';
 import { docsUrlFor, DOCS_PATHS, VIDEO_GUIDE_URL } from './utils/docsLinks';
 import { safeHttpUrl } from './utils/safeUrl';
@@ -24,6 +24,7 @@ import { PRICES_CHECKED } from './services/pricing';
 import { openPdf, closePdf, isClosedDoc } from './utils/pdfjs';
 import { pdfPlainText } from './services/pdfPages';
 import { isIsoDate, dateForms, countryForms, addressForms, conversionReason, SourceKind } from './utils/sourceForms';
+import { PdfTextIndex, verifyNorm, buildPdfTextIndex, isInPdf, conversionOf, ValueKind, Conversion, valueKey } from './utils/valueCheck';
 
 
 
@@ -225,9 +226,13 @@ interface HighlightData {
     value: string | number[];
     /** Other forms the value can have in the PDF, tried when it is not there word for word. */
     alternatives?: string[];
+    /** The page the text is expected on (its table): searched first. */
+    page?: number;
 }
 
 const CONVERTED_VALUE_PREFIX = "Converted for the XML";
+// An XML file whose saved form (formState.ts) no longer matches its XML.
+const CHANGED_SINCE_SAVED = 'This file was changed after the generator saved it, so it opens as its XML says. The printed units, PDF positions and verification marks saved with it are not used.';
 const GENERATED_VALUE_MESSAGE = "This value does not appear in the PDF. It was derived or added by the model, so please verify it.";
 const DERIVED_FROM_TEXT_MESSAGE = "Not word for word in the PDF. The marked text is what this value was derived from; please verify it.";
 const DERIVED_FROM_AREA_MESSAGE = "Not word for word in the PDF. The marked area is where this value was derived from; please verify it.";
@@ -554,51 +559,11 @@ const PdfPage: React.FC<{
     );
 };
 
-// --- Checking extracted values against the PDF text ---
-// A value counts as "in the PDF" when it appears there word for word, ignoring case, spacing and
-// punctuation ("BCR-017" matches "BCR® – 017"). Anything else was derived by the model and is
-// flagged for the user to check.
-export interface PdfTextIndex { joined: string; tokens: Set<string>; hasText: boolean }
-
-const verifyNorm = (s: string) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9.,%]/g, '');
-// A decimal comma and a decimal point are the same number: the generator writes "4.7" where a
-// German certificate prints "4,7". Applied to the PDF text and to the value alike.
-const decimalPoint = (s: string) => s.replace(/(\d),(?=\d)/g, '$1.');
-
-const buildPdfTextIndex = (pageTexts: string[]): PdfTextIndex => {
-    const spaced = pageTexts.join(' ');
-    const joined = decimalPoint(verifyNorm(spaced));
-    const tokens = new Set<string>();
-    for (const t of spaced.split(/\s+/)) {
-        const n = verifyNorm(t);
-        if (!n) continue;
-        tokens.add(n);
-        tokens.add(decimalPoint(n));
-        // A number with a footnote mark or punctuation glued on ("4.7¹" is "4.71" after
-        // normalising, "4.7," "4.7)") also counts as the number itself.
-        const num = t.match(/^[<>≤≥~±]?(\d+(?:[.,]\d+)?)[^\d]*$/);
-        if (num) tokens.add(decimalPoint(num[1]));
-    }
-    // Scanned certificates have no text layer: nothing can be checked automatically.
-    return { joined, tokens, hasText: joined.length > 200 };
-};
-
-// Footnote or list markers a value may start with ("2) half-width …", "a) …", "• …").
-const LEADING_MARKER = /^\s*(?:\(?[0-9a-z]{1,2}\)|[0-9]{1,2}\.(?=\s)|[*•\-–])\s*/i;
-
-const isInPdf = (text: string, index: PdfTextIndex): boolean => {
-    const v = decimalPoint(verifyNorm(String(text).replace(LEADING_MARKER, '')));
-    if (!v) return true;
-    if (v.length <= 3) return index.tokens.has(v) || index.tokens.has(v.replace(/[.,%]+$/, ''));
-    if (index.joined.includes(v)) return true;
-    // A longer text that strings together several sentences of the PDF still counts as found.
-    const parts = String(text).split(/[;:\n]+|\.\s+/).map(p => decimalPoint(verifyNorm(p))).filter(p => p.length >= 12);
-    return parts.length > 1 && parts.every(p => index.joined.includes(p));
-};
-
+// --- Checking extracted values against the PDF text (utils/valueCheck.ts) ---
 type VerifyStatus = 'check' | 'checked' | null;
 interface VerifyApi {
-    status: (value: unknown, source?: unknown) => VerifyStatus;
+    /** `kind`: the field's kind, for values converted for machine readability (valueCheck.ts). */
+    status: (value: unknown, source?: unknown, kind?: ValueKind) => VerifyStatus;
     setChecked: (value: unknown, checked: boolean) => void;
 }
 const VerifyContext = React.createContext<VerifyApi>({ status: () => null, setChecked: () => {} });
@@ -612,17 +577,17 @@ const VerifyContext = React.createContext<VerifyApi>({ status: () => null, setCh
 const PdfLinkContext = React.createContext<{ hasPdf: boolean; autoLocate: boolean }>({ hasPdf: false, autoLocate: false });
 
 /** Fields the model filled in, by tab, with the PDF wording where the value was converted. */
-const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: string }[] => {
-    const out: { tab: string; value: string; source?: string }[] = [];
-    const add = (tab: string, value: unknown, source?: unknown) => {
+const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: string; kind?: ValueKind }[] => {
+    const out: { tab: string; value: string; source?: string; kind?: ValueKind }[] = [];
+    const add = (tab: string, value: unknown, source?: unknown, kind?: ValueKind) => {
         const v = String(value ?? '').trim();
-        if (v) out.push({ tab, value: v, source: source ? String(source) : undefined });
+        if (v) out.push({ tab, value: v, source: source ? String(source) : undefined, kind });
     };
     d.administrativeData.producers.forEach(p => {
         const o: any = p.originalTexts || {};
         add('admin', p.name, o.name); add('admin', p.email, o.email); add('admin', p.phone, o.phone); add('admin', p.fax, o.fax);
         add('admin', p.address.street, o.street); add('admin', p.address.streetNo, o.streetNo); add('admin', p.address.postCode, o.postCode);
-        add('admin', p.address.city, o.city); add('admin', p.address.countryCode, o.countryCode);
+        add('admin', p.address.city, o.city); add('admin', p.address.countryCode, o.countryCode, 'country');
     });
     d.administrativeData.responsiblePersons.forEach(r => {
         const o: any = r.originalTexts || {};
@@ -645,7 +610,7 @@ const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: stri
             add('properties', r.name); add('properties', r.description);
             r.quantities.forEach(q => {
                 add('properties', q.name); add('properties', q.value); add('properties', q.uncertainty);
-                add('properties', q.unit); add('properties', q.coverageFactor); add('properties', q.coverageProbability);
+                add('properties', q.unit, undefined, 'unit'); add('properties', q.coverageFactor); add('properties', q.coverageProbability, undefined, 'probability');
             });
         });
     });
@@ -655,6 +620,14 @@ const collectVerifiable = (d: DRMD): { tab: string; value: string; source?: stri
     d.statements.custom.forEach(c => { add('statements', c.name); add('statements', c.content); });
     return out;
 };
+
+/** The review state of a document the AI has just filled in: all its values, none verified yet. */
+const freshReview = (d: DRMD): ReviewState => ({
+    aiFilled: Array.from(new Set(collectVerifiable(d).map(item => valueKey(item.value)).filter(Boolean))),
+    verified: [],
+});
+/** The document with its values marked as filled in by the AI. */
+const withFreshReview = (d: DRMD): DRMD => ({ ...d, review: freshReview(d) });
 
 // --- Main PDF Viewer Wrapper ---
 // Pages are stacked vertically in a scroll area. At 100 % each page is fitted into the pane (whole
@@ -825,7 +798,10 @@ const PdfViewer: React.FC<{
                 const q = raw.replace(/\s+/g, '');
                 if (q.length === 0) return -1;
                 const wordRe = raw.trim().length <= 3 ? new RegExp(`\\b${escapeRe(raw.trim())}\\b`) : null;
-                return texts.findIndex(({ spaced, joined }) => (wordRe ? wordRe.test(spaced) : joined.includes(q)));
+                const has = ({ spaced, joined }: { spaced: string; joined: string }) => (wordRe ? wordRe.test(spaced) : joined.includes(q));
+                const pref = highlightData.page;
+                if (pref && pref >= 1 && pref <= texts.length && has(texts[pref - 1])) return pref - 1;
+                return texts.findIndex(has);
             };
 
             const hit = pageOf((highlightData.value as string) || '');
@@ -1265,6 +1241,8 @@ const App: React.FC = () => {
   const [toastType, setToastType] = useState<'converted' | 'generated' | 'warning'>('warning');
   // A source the notice cites (the D-SI guide for a D-SI unit), opened in a new tab
   const [toastLink, setToastLink] = useState<{ href: string; label: string } | null>(null);
+  // A value converted for machine readability: the notice shows what the PDF prints and what the XML writes.
+  const [toastConversion, setToastConversion] = useState<Conversion | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const xmlInputRef = useRef<HTMLInputElement>(null);
@@ -1344,63 +1322,67 @@ const App: React.FC = () => {
       syncPaneWith(next);
   };
 
-  // ---- Which document is in the form, and which of its values the AI filled in ----
-  // Every document that takes over the form gets its own key ("ai:3" extracted, "xml:4" opened from a
-  // file, "new:5" entered by hand; a folder row has "row:<id>"). Only values the AI filled in are marked
-  // for checking against the PDF: a value typed by hand or read from an XML file is the user's own.
-  const docSeqRef = useRef(0);
-  const [docKey, setDocKey] = useState('new:0');
-  const aiValuesRef = useRef<Map<string, Set<string>>>(new Map());
-  /** A new key for the document taking over the form; what was kept for the previous one is dropped. */
-  const takeOverDoc = (kind: 'ai' | 'xml' | 'new') => {
-      for (const map of [aiValuesRef.current, checkedRef.current]) {
-          for (const key of [...map.keys()]) if (!key.startsWith('row:')) map.delete(key);
-      }
-      const key = `${kind}:${++docSeqRef.current}`;
-      setDocKey(key);
-      return key;
-  };
-  const rememberAiValues = (key: string, doc: DRMD) => {
-      aiValuesRef.current.set(key, new Set(collectVerifiable(doc).map(item => verifyNorm(item.value)).filter(Boolean)));
-  };
-
-  // ---- Checking extracted values against the PDF ----
+  // ---- Which values of the document in the form the AI filled in, and which the user verified ----
+  // Kept in the document itself (drmdData.review), so they travel with a folder row and are saved
+  // in the XML: a saved file opens again with the same values to verify. Only values the AI filled
+  // in are checked against the PDF; a document typed by hand, or opened from a file without that
+  // record, has no review and nothing is marked.
   const [pdfIndex, setPdfIndex] = useState<PdfTextIndex | null>(null);
-  // Values the user has confirmed, per document (a folder row keeps its own set).
-  const checkedRef = useRef<Map<string, Set<string>>>(new Map());
-  const [checkedVersion, setCheckedVersion] = useState(0);
-  const checkDocKey = reviewingBulkId ? `row:${reviewingBulkId}` : docKey;
-  // The AI filled in the document in the form (extracted here, or a result of a folder run).
-  const isAiDoc = aiValuesRef.current.has(checkDocKey);
+  const review = drmdData.review;
+  const isAiDoc = !!review;
   const isAiDocRef = useRef(isAiDoc);
   isAiDocRef.current = isAiDoc;
+  const reviewSets = useMemo(() => review ? { ai: new Set(review.aiFilled), verified: new Set(review.verified) } : null, [review]);
   const verifyApi = useMemo<VerifyApi>(() => {
       const active = !!pdfIndex && pdfIndex.hasText;
-      const checked = checkedRef.current.get(checkDocKey) || new Set<string>();
-      const aiValues = aiValuesRef.current.get(checkDocKey);
       return {
-          status: (value, source) => {
-              if (!active || !aiValues) return null;
+          status: (value, source, kind) => {
+              if (!active || !reviewSets) return null;
               const v = String(value ?? '').trim();
-              if (!v || !aiValues.has(verifyNorm(v)) || isInPdf(String(source ?? '').trim() || v, pdfIndex!)) return null;
-              return checked.has(verifyNorm(v)) ? 'checked' : 'check';
+              const key = valueKey(v);
+              if (!key || !reviewSets.ai.has(key)) return null;
+              if (isInPdf(String(source ?? '').trim() || v, pdfIndex!)) return null;
+              // Converted for machine readability from a form that is in the PDF (95 % → 0.95): not marked.
+              if (kind && conversionOf(v, kind, pdfIndex)) return null;
+              return reviewSets.verified.has(key) ? 'checked' : 'check';
           },
           setChecked: (value, isChecked) => {
-              const key = verifyNorm(String(value ?? ''));
+              const key = valueKey(value);
               if (!key) return;
-              // A value the AI filled in and the user then edited stays shown as verified.
-              if (isChecked) aiValues?.add(key);
-              let set = checkedRef.current.get(checkDocKey);
-              if (!set) { set = new Set(); checkedRef.current.set(checkDocKey, set); }
-              if (isChecked) set.add(key); else set.delete(key);
-              setCheckedVersion(n => n + 1);
+              setDrmdData(prev => {
+                  if (!prev.review) return prev;
+                  const verified = new Set(prev.review.verified);
+                  if (isChecked) verified.add(key); else verified.delete(key);
+                  // A value the AI filled in and the user then edited stays shown as verified.
+                  const aiFilled = isChecked && !prev.review.aiFilled.includes(key) ? [...prev.review.aiFilled, key] : prev.review.aiFilled;
+                  return { ...prev, review: { aiFilled, verified: Array.from(verified) } };
+              });
           },
       };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfIndex, checkDocKey, checkedVersion]);
+  }, [pdfIndex, reviewSets]);
 
   // Name of the folder a folder run saves into (null: results are kept in this tab).
   const [bulkFolderName, setBulkFolderName] = useState<string | null>(null);
+
+  // ---- Closing the folder results ----
+  // The folder results belong to their run. Starting another document (New DRMD, a PDF, an XML file)
+  // or another run closes them, so the list never offers certificates of a run that has ended.
+  // Results saved into the folder stay there; results kept only in this tab would be lost, so the
+  // generator asks first.
+  const unsavedFolderResults = bulkResults.filter(r => r.status === 'done' && (!bulkFolderName || !!r.saveError)).length;
+  const closeFolderResults = () => {
+      setBulkResults([]);
+      setBulkFolderName(null);
+      setBulkProgress({ current: 0, total: 0, currentFile: '' });
+      bulkFilesRef.current = new Map();
+      bulkDirsRef.current = new Map();
+  };
+  const [folderCloseAsk, setFolderCloseAsk] = useState<{ run: () => void } | null>(null);
+  /** Runs `run`, after asking when it would drop folder results that exist only in this tab. */
+  const confirmFolderClose = (run: () => void) => {
+      if (unsavedFolderResults > 0) setFolderCloseAsk({ run });
+      else run();
+  };
   // The document as it was opened for review; only changes after that are written back.
   const reviewBaselineRef = useRef<DRMD | null>(null);
   // A review edit waiting to be saved into the folder (debounced while typing).
@@ -1511,10 +1493,11 @@ const App: React.FC = () => {
 
   // A notice next to the marked source disappears after 10 seconds, or as soon as the user clicks or
   // types anywhere else (the next field they check brings its own notice).
+  // A notice that explains a conversion stays until then, so it can be read in full.
   const toastRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
       if (!toastMessage) return;
-      const timer = setTimeout(() => setToastMessage(null), 10000);
+      const timer = toastConversion ? undefined : setTimeout(() => setToastMessage(null), 10000);
       const dismiss = (e: Event) => {
           if (toastRef.current && e.target instanceof Node && toastRef.current.contains(e.target)) return;
           setToastMessage(null);
@@ -1529,7 +1512,7 @@ const App: React.FC = () => {
           document.removeEventListener('pointerdown', dismiss, true);
           document.removeEventListener('keydown', dismiss, true);
       };
-  }, [toastMessage]);
+  }, [toastMessage, toastConversion]);
 
   // The notice sits at the bottom of the certificate pane. When the marked source lies under it
   // (an address at the foot of a page), it moves to the top of the pane, so the mark stays visible.
@@ -1552,20 +1535,28 @@ const App: React.FC = () => {
       return () => timers.forEach(clearTimeout);
   }, [toastMessage]);
 
-  const showToast = (message: string, type: 'converted' | 'generated' | 'warning', link?: { href: string; label: string }) => {
+  const showToast = (message: string, type: 'converted' | 'generated' | 'warning', link?: { href: string; label: string }, conversion?: Conversion) => {
       setToastMessage(message);
       setToastType(type);
       setToastLink(link ?? null);
+      setToastConversion(conversion ?? null);
   };
+  /** The notice of a value converted for machine readability, as one sentence (and for screen readers). */
+  const conversionText = (c: Conversion) => c.printed
+      ? `${CONVERTED_VALUE_PREFIX}: "${c.printed}" → "${c.written}". ${c.reason}`
+      : `${CONVERTED_VALUE_PREFIX}: written as "${c.written}". ${c.reason}`;
+  const showConversion = (c: Conversion, link?: { href: string; label: string }) => showToast(conversionText(c), 'converted', link, c);
 
-  // While a D-SI unit is shown in the PDF, its own notice replaces the general ones of the search
-  // (its D-SI form is never in the PDF word for word: the notice explains the conversion instead).
-  const sourceNoticeRef = useRef<{ text: string; link?: { href: string; label: string } } | null>(null);
-  const sourceToast = (message: string, type: 'converted' | 'generated' | 'warning') => {
+  // While a D-SI unit (or another converted value) is shown in the PDF, its own notice replaces the
+  // general ones of the search (its XML form is never in the PDF word for word: the notice explains the conversion).
+  type SourceNotice = { text: string; link?: { href: string; label: string }; conversion?: Conversion };
+  const sourceNoticeRef = useRef<SourceNotice | null>(null);
+  const sourceToast = (message: string, type: 'converted' | 'generated' | 'warning', conversion?: Conversion) => {
       const n = sourceNoticeRef.current;
-      if (n) showToast(n.text, 'converted', n.link);
-      else showToast(message, type);
+      if (n) showToast(n.text, 'converted', n.link, n.conversion);
+      else showToast(message, type, undefined, conversion);
   };
+  const convertedToast = (c: Conversion) => sourceToast(conversionText(c), 'converted', c);
 
   const normalizeCoords = (coords: number[]): number[] | null => {
       if (!Array.isArray(coords) || coords.length !== 5) return null;
@@ -1599,7 +1590,7 @@ const App: React.FC = () => {
   // A country code is either the country's name converted (“Belgium” → BE) or derived from the address.
   const showCountryNotice = (code: string, found: string) => {
       const isName = !/\d/.test(found) && found.length > 2 && !(drmdData.administrativeData.producers || []).some(p => sameText(p.address.city, found));
-      if (isName) sourceToast(`${CONVERTED_VALUE_PREFIX}: "${found}" → "${code}". ${conversionReason('country')}`, 'converted');
+      if (isName) convertedToast({ printed: found, written: code, reason: conversionReason('country') });
       else sourceToast(`"${code}" is not written in the PDF: the country was derived from the address marked here ("${found}"). ${conversionReason('country')} Please check it.`, 'generated');
   };
 
@@ -1611,12 +1602,12 @@ const App: React.FC = () => {
       } else if (c.kind === 'address') {
           sourceToast(`"${c.value}" is not written in the PDF: the model added it to the address marked here ("${found}"). Please check it.`, 'generated');
       } else {
-          sourceToast(`${CONVERTED_VALUE_PREFIX}: "${found}" → "${c.value}". ${conversionReason(c.kind)}`, 'converted');
+          convertedToast({ printed: found, written: c.value, reason: conversionReason(c.kind) });
       }
   };
 
   const handleHighlight = (primaryTarget?: number[] | string | null, secondaryTarget?: number[] | string | null, textFallback?: string, originalText?: string,
-                           opts?: { kind?: SourceKind; address?: { city?: string; postCode?: string }; name?: string; line?: string; notice?: { text: string; link?: { href: string; label: string } } }) => {
+                           opts?: { kind?: SourceKind; address?: { city?: string; postCode?: string }; name?: string; line?: string; notice?: SourceNotice }) => {
       setToastMessage(null);
       sourceNoticeRef.current = opts?.notice ?? null;
       highlightFallbackRef.current = Array.isArray(secondaryTarget) && secondaryTarget.length === 5 ? normalizeCoords(secondaryTarget) : null;
@@ -1636,7 +1627,7 @@ const App: React.FC = () => {
               if (isTransformed && kind === 'country') {
                   showCountryNotice(value, originalText!.trim());
               } else if (isTransformed) {
-                  sourceToast(`${CONVERTED_VALUE_PREFIX}: "${originalText}" → "${textFallback}".${reason}`, 'converted');
+                  convertedToast({ printed: originalText!.trim(), written: value, reason: conversionReason(converted ? kind : undefined) });
               } else if (converted && !verbatim) {
                   sourceToast(`Written as "${value}" for the XML; the marked area is where it was taken from.${reason}`, 'converted');
               } else if (!verbatim) {
@@ -1649,7 +1640,7 @@ const App: React.FC = () => {
       if (isTransformed) {
           setHighlightData({ type: 'text', value: originalText });
           if (kind === 'country') showCountryNotice(value, originalText!.trim());
-          else sourceToast(`${CONVERTED_VALUE_PREFIX}: "${originalText}" → "${textFallback}".${reason}`, 'converted');
+          else convertedToast({ printed: originalText!.trim(), written: value, reason: conversionReason(converted ? kind : undefined) });
           return;
       }
 
@@ -1860,6 +1851,7 @@ const App: React.FC = () => {
       const ctx = { texts: unitContextTexts(q as any, res, prop, drmdData.statements?.official?.metrologicalTraceability) };
       let text: string;
       let page: number | undefined;
+      let conversion: Conversion | undefined;
       if (dsi) {
           const c = checkDsi(dsi);
           if (!c.ok) {
@@ -1875,6 +1867,12 @@ const App: React.FC = () => {
               const why = rules && rules.dsi === dsi ? rules.explanation : explainDsi(c);
               text = `Converted for the XML: the unit ${shownUnit} marked here is written in D-SI as ${dsi}, ${how}. ${why}${value ? ` The value ${value} stays exactly as it is.` : ''}`
                   + (mismatch ? ` Note: ${dsi} is not the same size as "${unit}"; check it.` : '');
+              conversion = {
+                  printed: unit && unit !== '\\one' && unit !== dsi ? unit : '',
+                  written: dsi,
+                  reason: `Units are written in D-SI, ${how}. ${why}${value ? ` The value ${value} stays exactly as it is.` : ''}`
+                      + (mismatch ? ` Note: ${dsi} is not the same size as "${unit}"; check it.` : ''),
+              };
               page = DSI_CLASS_PAGE[c.cls];
           }
       } else if (unit) {
@@ -1886,9 +1884,32 @@ const App: React.FC = () => {
           page = 48;
       }
       const link = dsiGuideLink(page);
-      const notice = { text, link };
+      const notice = { text, link, conversion };
       handleHighlight(q.fieldCoordinates?.unit, res.sectionCoordinates, unit && unit !== '\\one' ? unit : res.name, undefined, { notice });
-      showToast(text, 'converted', link);
+      showToast(text, 'converted', link, conversion);
+  };
+
+  /**
+   * A cell of a property table is focused: the table is marked in the PDF. A value written in another
+   * form for machine readability (P = 95 % as 0.95, a decimal comma, a D-SI unit) is marked where the
+   * PDF prints it, and the notice says what it was converted into and why.
+   */
+  const showCellSource = (raw: unknown, kind: ValueKind, res: MeasurementResult) => {
+      const page = Array.isArray(res.sectionCoordinates) && res.sectionCoordinates.length === 5 ? res.sectionCoordinates[0] : undefined;
+      const c = conversionOf(raw, kind, pdfIndex, page);
+      if (!c) { handleHighlight(res.sectionCoordinates, null, res.name); return; }
+      const notice = { text: conversionText(c), conversion: c };
+      if (!c.mark) {
+          handleHighlight(res.sectionCoordinates, null, res.name, undefined, { notice });
+          showConversion(c);
+          return;
+      }
+      setToastMessage(null);
+      sourceNoticeRef.current = notice;
+      highlightFallbackRef.current = null;
+      conversionRef.current = null;
+      setHighlightData({ type: 'text', value: c.mark.text, page: c.mark.page });
+      showConversion(c);
   };
 
   // ---- A PDF or folder chosen before an API key was entered ----
@@ -1968,7 +1989,8 @@ const App: React.FC = () => {
   };
 
   /** A PDF that was picked or dropped: checked, then extracted (or kept until an API key is entered). */
-  const acceptPdfFile = (file: File) => {
+  const acceptPdfFile = (file: File) => confirmFolderClose(() => acceptPdfFileNow(file));
+  const acceptPdfFileNow = (file: File) => {
       // Validation: Size (20MB)
       if (file.size > 20 * 1024 * 1024) {
           setError(`File ${file.name} exceeds the 20MB limit.`);
@@ -2125,8 +2147,8 @@ const App: React.FC = () => {
       setIdentifierStatus(null);
       setExtractionWarning(null);
       setIsProcessing(true);
-      // Reset bulk results when starting a single upload
-      setBulkResults([]);
+      // A single PDF ends the folder run: its list is closed (see closeFolderResults).
+      closeFolderResults();
       setBulkProcessing(false);
 
       const reader = new FileReader();
@@ -2161,10 +2183,10 @@ const App: React.FC = () => {
               // Put the extracted data on screen NOW. This used to wait for every ROR / CAS
               // look-up (about one extra Gemini request per element) to finish first, which is
               // why a finished extraction could sit behind a spinner and a blank form.
-              mapped = finishExtractedDoc(mapExtractedToDrmd(extractedData, file.name, base64Content, await pdfTextPromise));
-              // The PDF in the pane is now the document's human-readable PDF, and the AI filled in its values.
+              // The AI filled in its values: they are checked against the PDF.
+              mapped = withFreshReview(finishExtractedDoc(mapExtractedToDrmd(extractedData, file.name, base64Content, await pdfTextPromise)));
+              // The PDF in the pane is now the document's human-readable PDF.
               shownRmDataRef.current = (mapped.binaryDocuments || []).find(d => d.rmDocument)?.data || null;
-              rememberAiValues(takeOverDoc('ai'), mapped);
               setDrmdData(mapped);
               setActiveTab("admin");
             } catch (err) {
@@ -2317,6 +2339,9 @@ const App: React.FC = () => {
                   } catch (unitErr) {
                       console.warn(`D-SI unit check failed for ${file.name}; the rules' units are kept.`, unitErr);
                   }
+                  // The AI filled in this row's values: they are checked against the PDF when it is
+                  // reviewed, and the saved XML keeps which ones (so it opens again the same way).
+                  finalDoc = withFreshReview(finalDoc);
 
                   // Build the XML once now so a broken document fails (and is retried) here rather
                   // than at download time. It is not stored: each XML embeds the PDF, and keeping
@@ -2341,9 +2366,6 @@ const App: React.FC = () => {
                       }
                   }
 
-                  // The AI filled in this row's values: they are marked for checking when it is reviewed.
-                  rememberAiValues(`row:${id}`, finalDoc);
-                  checkedRef.current.delete(`row:${id}`);
                   setRow(id, {
                       savedAs,
                       saveError,
@@ -2432,11 +2454,6 @@ const App: React.FC = () => {
       shownRmDataRef.current = null;
       setReviewingBulkId(null);
       setReviewSave({ state: 'idle' });
-      // A new folder run: what was kept for the rows of an earlier run is dropped.
-      for (const map of [aiValuesRef.current, checkedRef.current]) {
-          for (const key of [...map.keys()]) if (key.startsWith('row:')) map.delete(key);
-      }
-      takeOverDoc('new');
       const blank = createInitialDrmd();
       blankDocRef.current = blank;
       setDrmdData(blank);
@@ -2512,10 +2529,10 @@ const App: React.FC = () => {
 
   // Starts a folder run, or keeps it until an API key is entered. A folder whose PDFs all have their
   // XML already needs no key: it only lists the results.
-  const runOrHoldBulk = async (picked: PickedPdf[], folderName: string | null, label: string) => {
+  const runOrHoldBulk = async (picked: PickedPdf[], folderName: string | null, label: string) => confirmFolderClose(() => {
       if (!conn.apiKey && picked.some(p => !p.hasXml)) { holdUntilKey({ kind: 'bulk', picked, folderName, label }); return; }
-      await startBulk(picked, folderName);
-  };
+      void startBulk(picked, folderName);
+  });
 
   // Fallback for browsers that cannot write into folders: results stay in the tab.
   const handleBulkUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2574,15 +2591,19 @@ const App: React.FC = () => {
       flushPendingSave();
       const runId = ++documentRunRef.current;
       let doc: DRMD;
+      let changedSinceSaved = false;
       try {
           if (result.savedEarlier && !result.loaded) {
               // Extracted in an earlier run: read the XML that sits next to the PDF.
               const dir = bulkDirsRef.current.get(result.id);
               if (!dir || !result.savedAs) throw new Error('the folder is no longer available');
               const xmlText = await (await (await dir.getFileHandle(result.savedAs)).getFile()).text();
-              doc = normalizeMaterialLinks(parseDrmdXml(xmlText));
-              // Written by an earlier folder run of the generator: its values were filled in by the AI.
-              if (!aiValuesRef.current.has(`row:${result.id}`)) rememberAiValues(`row:${result.id}`, doc);
+              // Saved by this version: the form as it was saved, with its values to verify and its marks.
+              const read = readDrmdXml(xmlText);
+              changedSinceSaved = read.changedSinceSaved;
+              doc = read.restored ? read.doc : normalizeMaterialLinks(read.doc);
+              // Written by an earlier folder run without that record: its values were filled in by the AI.
+              if (!doc.review) doc = withFreshReview(doc);
               const v = validateDrmd(doc);
               const { rmCode, rmName } = extractRmInfo(doc);
               setBulkResults(prev => prev.map(r => r.id === result.id ? {
@@ -2605,7 +2626,7 @@ const App: React.FC = () => {
       setIdentifierStatus(null);
       setExtractionWarning(result.incomplete?.length
           ? `The AI's answer for this file was incomplete — missing: ${result.incomplete.join(', ')}. Use "Retry" or fill in the missing parts.`
-          : null);
+          : changedSinceSaved ? CHANGED_SINCE_SAVED : null);
       setDrmdData(doc);
 
       // Show the PDF: straight from its file, or from the copy embedded in the document.
@@ -2720,7 +2741,10 @@ const App: React.FC = () => {
           reader.onload = (e) => {
               try {
                   const xmlContent = e.target?.result as string;
-                  const parsedData = normalizeMaterialLinks(parseDrmdXml(xmlContent));
+                  const read = readDrmdXml(xmlContent);
+                  // A file this version saved opens as it was saved (with its values still to verify);
+                  // any other file as its XML says, with its values as the user's own.
+                  const parsedData = read.restored ? read.doc : normalizeMaterialLinks(read.doc);
 
                   // Show the human-readable PDF embedded in the file. Without one (or if it cannot be read),
                   // the pane is emptied: it must never keep showing the certificate of the previous document.
@@ -2728,13 +2752,11 @@ const App: React.FC = () => {
                   setPdfName("");
                   shownRmDataRef.current = null;
                   syncPaneWith(parsedData.binaryDocuments || []);
-                  // Opened from a file: its values are the user's own, not filled in by the AI here.
-                  takeOverDoc('xml');
-
                   documentRunRef.current++;
                   setReviewingBulkId(null);
+                  closeFolderResults();
                   setIdentifierStatus(null);
-                  setExtractionWarning(null);
+                  setExtractionWarning(read.changedSinceSaved ? CHANGED_SINCE_SAVED : null);
                   setDrmdData(parsedData);
                   setActiveTab("admin");
                   setError(null);
@@ -2766,6 +2788,7 @@ const App: React.FC = () => {
       if (isProcessing || bulkProcessing) return;
       flushPendingSave();          // a folder row being reviewed keeps its last edits
       dropPendingUpload();         // a PDF waiting for an API key is dropped
+      closeFolderResults();        // the folder run has ended: its list is closed (its files stay in the folder)
       documentRunRef.current++;    // late look-ups for the previous document stand down
       unitAiTimers.current.forEach(t => clearTimeout(t));
       unitAiTimers.current.clear();
@@ -2783,7 +2806,6 @@ const App: React.FC = () => {
       setEditingIdsFor(null);
       setHighlightData(null);
       setToastMessage(null);
-      takeOverDoc('new');
       const blank = createInitialDrmd();
       blankDocRef.current = blank;
       setDrmdData(blank);
@@ -2792,7 +2814,7 @@ const App: React.FC = () => {
   /** "New DRMD": asks first when the form or the pane holds something that would be cleared. */
   const requestNewDrmd = () => {
       if (isProcessing || bulkProcessing) return;
-      if (drmdData === blankDocRef.current && !pdfUrl && !pendingUploadRef.current) { startNewDrmd(); return; }
+      if (drmdData === blankDocRef.current && !pdfUrl && !pendingUploadRef.current && bulkResults.length === 0) { startNewDrmd(); return; }
       setNewDocAsk(true);
   };
 
@@ -2941,7 +2963,7 @@ const App: React.FC = () => {
                           Open a DRMD XML file, for example one you saved earlier, edit it and save it again.
                           The PDF embedded in it is shown alongside.
                       </p>
-                      <div className="mt-3"><button onClick={() => xmlInputRef.current?.click()} disabled={busy} className="btn-secondary"><Icon name="import" /> Import XML</button></div>
+                      <div className="mt-3"><button onClick={() => confirmFolderClose(() => xmlInputRef.current?.click())} disabled={busy} className="btn-secondary"><Icon name="import" /> Import XML</button></div>
                   </li>
               </ol>
           </div>
@@ -2954,13 +2976,20 @@ const App: React.FC = () => {
                       Every change is checked at once against the DRMD 1.0.0 XML schema and the official business rules (Schematron).
                       The bar at the bottom of the window shows the result. Validate &amp; export lists each finding:
                       <span className="font-medium"> Error</span> (must be corrected before the DRMD is valid),
-                      <span className="font-medium"> Check</span> (a rule that applies only in some cases) and
+                      <span className="font-medium"> Conditional</span> (a rule that applies only in some cases) and
                       <span className="font-medium"> Note</span> (a hint).
+                  </dd>
+                  <dt className="text-ink-muted">AI conversion</dt>
+                  <dd>
+                      Separately from the validation, Validate &amp; export lists the values the AI filled in that do not appear word for word in the PDF,
+                      to be verified against the certificate. Values only written in another form for machine readability, such as a coverage probability
+                      of 95 % as 0.95, are not counted; clicking one shows where the PDF prints it and what it was converted into.
                   </dd>
                   <dt className="text-ink-muted">Saving</dt>
                   <dd>
                       Save the DRMD XML, and if you like an HTML report, on Validate &amp; export. Nothing is stored on a server, and nothing is kept
-                      when this tab is closed: to continue later, save the XML and open it again with Import XML.
+                      when this tab is closed: to continue later, save the XML and open it again with Import XML. It opens as it was saved, with the
+                      values still to verify and your verification marks.
                       {canWriteFolders ? ' A bulk conversion saves each XML and HTML file into the folder as soon as it is ready.' : ' A bulk conversion keeps its results in this tab, to be downloaded as a ZIP file.'}
                   </dd>
               </dl>
@@ -3145,7 +3174,7 @@ const App: React.FC = () => {
                             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)] gap-3">
                                 <Input label="Post code" value={prod.address.postCode} onFocus={() => handleHighlight(prod.fieldCoordinates?.postCode, prod.sectionCoordinates, prod.address.postCode, prod.originalTexts?.postCode)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.postCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.postCode} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.postCode, prod.sectionCoordinates, prod.address.postCode, prod.originalTexts?.postCode)} />
                                 <Input label="City" value={prod.address.city} onFocus={() => handleHighlight(prod.fieldCoordinates?.city, prod.sectionCoordinates, prod.address.city, prod.originalTexts?.city)} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.city = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.city} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.city, prod.sectionCoordinates, prod.address.city, prod.originalTexts?.city)} />
-                                <Input label="Country" placeholder="Two-letter code, e.g. US" value={prod.address.countryCode} onFocus={() => handleHighlight(prod.fieldCoordinates?.countryCode, prod.sectionCoordinates, prod.address.countryCode, prod.originalTexts?.countryCode, { kind: 'country', address: prod.address })} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.countryCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.countryCode} onInfoClick={() => handleHighlight(prod.fieldCoordinates?.countryCode, prod.sectionCoordinates, prod.address.countryCode, prod.originalTexts?.countryCode, { kind: 'country', address: prod.address })} />
+                                <Input label="Country" placeholder="Two-letter code, e.g. US" value={prod.address.countryCode} onFocus={() => handleHighlight(prod.fieldCoordinates?.countryCode, prod.sectionCoordinates, prod.address.countryCode, prod.originalTexts?.countryCode, { kind: 'country', address: prod.address })} onChange={(v) => { const list = [...drmdData.administrativeData.producers]; list[idx].address.countryCode = v; setDrmdData(p => ({...p, administrativeData: {...p.administrativeData, producers: list}})); }} source={prod.originalTexts?.countryCode} verifyKind="country" onInfoClick={() => handleHighlight(prod.fieldCoordinates?.countryCode, prod.sectionCoordinates, prod.address.countryCode, prod.originalTexts?.countryCode, { kind: 'country', address: prod.address })} />
                             </div>
                         </fieldset>
                      </div>
@@ -3549,7 +3578,7 @@ const App: React.FC = () => {
                                                             </div>
                                                         </td>
                                                         <td className="p-1 relative group-td">
-                                                            <CellInput ariaLabel="Value" align="right" value={q.value} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { 
+                                                            <CellInput ariaLabel="Value" align="right" value={q.value} onFocus={() => showCellSource(q.value, 'number', res)} onChange={(val) => { 
                                                                     const list = [...drmdData.properties]; 
                                                                     list[pIdx].results[rIdx].quantities[qIdx].value = val; 
                                                                     // The D-SI value is the value itself (a D-SI unit never changes it)
@@ -3558,10 +3587,10 @@ const App: React.FC = () => {
                                                                 }} />
                                                         </td>
                                                         <td className="p-1 relative">
-                                                            <CellInput ariaLabel="Uncertainty" align="right" problem={unc.uncertainty} value={q.uncertainty} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = val; setDrmdData(p => ({...p, properties: list})); }} />
+                                                            <CellInput ariaLabel="Uncertainty" align="right" problem={unc.uncertainty} value={q.uncertainty} onFocus={() => showCellSource(q.uncertainty, 'number', res)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].uncertainty = val; setDrmdData(p => ({...p, properties: list})); }} />
                                                         </td>
                                                         <td className="p-1 relative">
-                                                            <CellInput ariaLabel="Unit" value={q.unit} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { 
+                                                            <CellInput ariaLabel="Unit" value={q.unit} verifyKind="unit" onFocus={() => showCellSource(q.unit, 'unit', res)} onChange={(val) => { 
                                                                     const list = [...drmdData.properties]; 
                                                                     const row = list[pIdx].results[rIdx].quantities[qIdx];
                                                                     // A changed unit is written in D-SI again at once, by the rules of the D-SI
@@ -3588,7 +3617,7 @@ const App: React.FC = () => {
                                                             />
                                                         </td>
                                                         <td className="p-1"><CellInput ariaLabel="Coverage factor k" align="right" problem={unc.k} placeholder={unc.k ? 'e.g. 2' : undefined} value={q.coverageFactor} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageFactor = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
-                                                        <td className="p-1"><CellInput ariaLabel="Coverage probability" align="right" problem={unc.p} placeholder={unc.p ? '0.95' : undefined} title={pXml ? `Written to the XML as ${pXml}` : 'Coverage probability P: 0.95 or 95 %'} value={q.coverageProbability} onFocus={() => handleHighlight(res.sectionCoordinates, null, res.name)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
+                                                        <td className="p-1"><CellInput ariaLabel="Coverage probability" align="right" problem={unc.p} placeholder={unc.p ? '0.95' : undefined} title={pXml ? `Written to the XML as ${pXml}` : 'Coverage probability P: 0.95 or 95 %'} verifyKind="probability" value={q.coverageProbability} onFocus={() => showCellSource(q.coverageProbability, 'probability', res)} onChange={(val) => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities[qIdx].coverageProbability = val; setDrmdData(p => ({...p, properties: list})); }} /></td>
                                                         <td className="text-center"><button onClick={() => { const list = [...drmdData.properties]; list[pIdx].results[rIdx].quantities.splice(qIdx, 1); setDrmdData(p => ({...p, properties: list})); }} className="icon-btn-danger w-6 h-6" title="Remove row" aria-label="Remove row"><Icon name="x" size={14} /></button></td>
                                                     </tr>
                                                     {editingIdsFor === q.uuid && (
@@ -3846,10 +3875,12 @@ const App: React.FC = () => {
         : (totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0);
 
     const isBlankDoc = drmdData === blankDocRef.current;
-    const severityRow = (kind: 'error' | 'check' | 'note', item: { ruleId: string; section: string; message: string }, key: string) => (
-        <li key={key} className="grid grid-cols-[64px_1fr] gap-3 px-4 py-2.5">
-            <span className={kind === 'error' ? 'tag-bad justify-center' : kind === 'check' ? 'tag-check justify-center' : 'tag-neutral justify-center'}>
-                {kind === 'error' ? 'Error' : kind === 'check' ? 'Check' : 'Note'}
+    // Findings of the schema and the business rules. A conditional rule has its own colour: amber
+    // is kept for the values of the AI conversion that need verifying.
+    const severityRow = (kind: 'error' | 'conditional' | 'note', item: { ruleId: string; section: string; message: string }, key: string) => (
+        <li key={key} className="grid grid-cols-[84px_1fr] gap-3 px-4 py-2.5" data-severity={kind}>
+            <span className={kind === 'error' ? 'tag-bad justify-center' : kind === 'conditional' ? 'tag-cond justify-center' : 'tag-neutral justify-center'}>
+                {kind === 'error' ? 'Error' : kind === 'conditional' ? 'Conditional' : 'Note'}
             </span>
             <div className="min-w-0">
                 <p className="text-sm text-ink">{italicK(item.message)}</p>
@@ -3930,8 +3961,8 @@ const App: React.FC = () => {
                     </div>
 
                     {totalCount > 0 && (
-                        <div className="panel overflow-x-auto relative">
-                            <table className="data-table min-w-[760px]">
+                        <div className="panel overflow-x-auto relative" data-testid="folder-table">
+                            <table className="data-table min-w-[600px]">
                                 <thead>
                                     <tr>
                                         <th className="w-10 text-right">#</th>
@@ -3961,8 +3992,8 @@ const App: React.FC = () => {
                                             title={canShow ? 'Show the validation report of this certificate' : undefined}>
                                             <td className="py-2 text-right text-ink-faint tabular-nums text-xs">{idx + 1}</td>
                                             <td className="py-2 font-medium text-sm tabular-nums whitespace-nowrap">{result.rmCode || <span className="font-sans text-ink-faint">–</span>}</td>
-                                            <td className="py-2 max-w-[220px] truncate" title={result.rmName}>{result.rmName || <span className="text-ink-faint">–</span>}</td>
-                                            <td className="py-2 max-w-[200px] truncate text-xs text-ink-muted" title={result.filePath || result.fileName}>{result.filePath || result.fileName}</td>
+                                            <td className="py-2"><div className="max-w-[220px] truncate" title={result.rmName}>{result.rmName || <span className="text-ink-faint">–</span>}</div></td>
+                                            <td className="py-2"><div className="max-w-[180px] truncate text-xs text-ink-muted" title={result.filePath || result.fileName}>{result.filePath || result.fileName}</div></td>
                                             <td className="py-2">
                                                 {result.status === 'pending' && <span className="tag-neutral">Waiting</span>}
                                                 {result.savedEarlier && !result.loaded && <span className="tag-neutral" title={`${result.savedAs} already existed, so this PDF was not extracted again`}><Icon name="check" size={12} /> Saved earlier</span>}
@@ -3972,7 +4003,7 @@ const App: React.FC = () => {
                                                     result.validation.errors > 0
                                                         ? <span className="tag-bad" title="Open it with Review to see and fix the errors">{result.validation.errors} error{result.validation.errors === 1 ? '' : 's'}</span>
                                                         : result.validation.conditionalErrors > 0
-                                                            ? <span className="tag-ok" title="Valid. Some conditional rules may apply to this material: check them in Review.">Valid · {result.validation.conditionalErrors} to check</span>
+                                                            ? <span className="tag-ok" title={`Valid. ${result.validation.conditionalErrors} conditional rule${result.validation.conditionalErrors === 1 ? '' : 's'} may apply to this certificate: click the row to see ${result.validation.conditionalErrors === 1 ? 'it' : 'them'}.`}>Valid · {result.validation.conditionalErrors} conditional</span>
                                                             : <span className="tag-ok"><Icon name="check" size={12} /> Valid</span>
                                                 )}
                                                 {result.status === 'done' && !result.incomplete?.length && !result.validation && !result.savedEarlier && <span className="tag-ok">Done</span>}
@@ -3988,9 +4019,10 @@ const App: React.FC = () => {
                                             <td className="py-1.5 text-right whitespace-nowrap">
                                                 {result.status === 'done' && !bulkProcessing && (
                                                     <div className="inline-flex items-center gap-0.5">
-                                                        <button onClick={() => handleBulkReview(result)} className={isOpen ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'} title="Open in the form and the PDF viewer">
-                                                            {isOpen ? 'Open' : 'Review'}
-                                                        </button>
+                                                        {/* One meaning per control: Review is an action; the row that is open shows its state. */}
+                                                        {isOpen
+                                                            ? <span className="inline-flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium text-petrol-700 whitespace-nowrap" data-testid="row-now-open" title="This certificate is open in the form and the PDF viewer"><span className="dot bg-petrol-600" /> Now open</span>
+                                                            : <button onClick={() => handleBulkReview(result)} className="btn-secondary btn-sm" title="Open in the form and the PDF viewer">Review</button>}
                                                         {(!bulkFolderName || !!result.saveError) && <>
                                                             <button onClick={() => handleBulkDownloadSingle(result)} className="btn-quiet btn-sm" title="Download DRMD XML"><Icon name="download" size={14} /> XML</button>
                                                             <button onClick={() => handleBulkDownloadSingleHtml(result)} className="btn-quiet btn-sm" title="Download HTML report"><Icon name="download" size={14} /> Report</button>
@@ -4040,11 +4072,51 @@ const App: React.FC = () => {
             <div className="section scroll-mt-4" id="this-document" data-testid="this-document">
                 <SectionHeader title={reviewIndex >= 0 ? `This document (${reviewList[reviewIndex]?.rmCode || reviewList[reviewIndex]?.fileName || 'from the folder'})` : 'This document'} />
 
-                {/* (a) Validation report */}
+                {/* Two kinds of findings, kept apart: (a) what the AI read, to be verified against the PDF,
+                    and (b) what the schema and the business rules say about the XML. */}
+                {/* (a) AI conversion: values to verify */}
+                {isAiDoc && (
+                    <div className="panel overflow-hidden mb-4" data-testid="ai-check">
+                        <div className="panel-head">
+                            <span className="inline-flex items-center gap-2"><Icon name="square" size={15} className="text-check" /> AI conversion: values to verify</span>
+                            <span className="text-xs font-normal text-ink-muted tabular-nums">{pendingChecks.total} to verify · {pendingChecks.verified} verified</span>
+                        </div>
+                        {!pdfUrl ? (
+                            <p className="px-4 py-3 text-sm text-ink-soft">The PDF is not shown, so the values the AI filled in cannot be compared with it here.</p>
+                        ) : !pdfIndex ? (
+                            <p className="px-4 py-3 text-sm text-ink-soft inline-flex items-center gap-2"><Spinner size={12} className="text-petrol-600" /> Reading the text of the PDF…</p>
+                        ) : !pdfIndex.hasText ? (
+                            <p className="px-4 py-3 text-sm text-ink-soft">The PDF has no text layer (it is scanned), so the values could not be compared with it automatically. Compare them with the certificate yourself.</p>
+                        ) : pendingChecks.total > 0 ? (
+                            <div className="px-4 py-3 border-l-[3px] border-check bg-check-bg/60">
+                                <p className="text-sm text-ink">
+                                    <strong className="font-semibold">{pendingChecks.total} value{pendingChecks.total === 1 ? '' : 's'} the AI filled in {pendingChecks.total === 1 ? 'does' : 'do'} not appear word for word in the PDF.</strong>{' '}
+                                    {pendingChecks.total === 1
+                                        ? 'It is outlined in amber in the form: compare it with the certificate and mark it as verified.'
+                                        : 'They are outlined in amber in the form: compare each with the certificate and mark it as verified.'}
+                                </p>
+                                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                                    {TABS.filter(t => pendingChecks.byTab[t.id]).map(t => (
+                                        <button key={t.id} onClick={() => setActiveTab(t.id)} className="btn-secondary btn-sm" data-verify-tab={t.id}>
+                                            {t.label} <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-check-bg text-check border border-check-line text-2xs font-semibold inline-flex items-center justify-center tabular-nums">{pendingChecks.byTab[t.id]}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="px-4 py-3 text-sm text-ink inline-flex items-center gap-2"><Icon name="check" size={15} className="text-ok" /> Every value the AI filled in was found in the PDF or verified by you.</p>
+                        )}
+                        <p className="px-4 py-2 border-t border-line-soft hint">
+                            About the content the AI read; it does not change whether the XML is valid. Values written in another form for machine readability, such as a coverage probability of 95 % as 0.95, a decimal comma, a date, a country code or a D-SI unit, are not counted: click one to see where it is printed and what it was converted into.
+                        </p>
+                    </div>
+                )}
+
+                {/* (b) Schema and business rules */}
                 <div className="panel overflow-hidden" data-testid="validation-report">
                     <div className="panel-head">
-                        <span>Validation report</span>
-                        <span className="text-xs font-normal text-ink-muted tabular-nums">{errors.length} error{errors.length === 1 ? '' : 's'} · {conditionalErrors.length} to check · {warnings.length} note{warnings.length === 1 ? '' : 's'}</span>
+                        <span className="inline-flex items-center gap-2"><Icon name="file" size={15} className="text-ink-muted" /> XML: schema and business rules</span>
+                        <span className="text-xs font-normal text-ink-muted tabular-nums">{errors.length} error{errors.length === 1 ? '' : 's'} · {conditionalErrors.length} conditional · {warnings.length} note{warnings.length === 1 ? '' : 's'}</span>
                     </div>
                     <div className={`px-4 py-3.5 flex items-center gap-x-4 gap-y-3 border-b ${isValid ? 'border-ok-line bg-ok-bg' : 'border-bad-line bg-bad-bg'}`}>
                         <span className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-full ${isValid ? 'bg-ok text-white' : 'bg-bad text-white'}`}>
@@ -4052,37 +4124,27 @@ const App: React.FC = () => {
                         </span>
                         <div className="flex-1 min-w-0">
                             <p className="text-md font-semibold text-ink">
-                                {isValid ? 'Ready to export' : `${errors.length} error${errors.length === 1 ? '' : 's'} to fix before export`}
+                                {isValid ? 'Valid: ready to export' : `${errors.length} error${errors.length === 1 ? '' : 's'} to fix before export`}
                             </p>
                             <p className="text-sm text-ink-soft">
                                 {isValid
                                     ? 'The XML meets the DRMD 1.0.0 schema and the official business rules.'
                                     : 'The XML would not meet the DRMD 1.0.0 schema or the official business rules. The list below says where.'}
-                                {conditionalErrors.length > 0 && ` ${conditionalErrors.length} conditional rule${conditionalErrors.length === 1 ? '' : 's'} to check.`}
+                                {conditionalErrors.length > 0 && ` ${conditionalErrors.length} conditional rule${conditionalErrors.length === 1 ? '' : 's'}: check whether ${conditionalErrors.length === 1 ? 'it applies' : 'they apply'} to this certificate.`}
                             </p>
                         </div>
                     </div>
-                    {pendingChecks.total > 0 && (
-                        <div className="flex items-center gap-3 border-b border-check-line bg-check-bg px-4 py-2.5 text-sm">
-                            <Icon name="square" className="text-check shrink-0" />
-                            <span className="flex-1 text-ink">
-                                {pendingChecks.total} extracted value{pendingChecks.total === 1 ? ' does' : 's do'} not appear word for word in the PDF and {pendingChecks.total === 1 ? 'is' : 'are'} not verified yet.
-                                They are outlined in amber: compare each with the certificate and mark it as verified.
-                            </span>
-                            {firstTabToCheck && <button onClick={() => setActiveTab(firstTabToCheck)} className="btn-secondary btn-sm">Show</button>}
-                        </div>
-                    )}
                     {errors.length === 0 && conditionalErrors.length === 0 && warnings.length === 0 ? (
                         <p className="px-4 py-6 text-sm text-ink-muted">No findings.</p>
                     ) : (
                         <ul className="divide-y divide-line-soft max-h-[420px] overflow-y-auto relative">
                             {errors.map((err, idx) => severityRow('error', err, `err-${idx}`))}
-                            {conditionalErrors.map((err, idx) => severityRow('check', err, `cerr-${idx}`))}
+                            {conditionalErrors.map((err, idx) => severityRow('conditional', err, `cerr-${idx}`))}
                             {warnings.map((warn, idx) => severityRow('note', warn, `warn-${idx}`))}
                         </ul>
                     )}
                     <p className="px-4 py-2 border-t border-line-soft hint">
-                        <span className="font-medium text-ink-soft">Check</span> marks a conditional rule: it applies only if the certificate covers that case.
+                        <span className="font-medium text-ink-soft">Error</span>: must be corrected for a valid file. <span className="font-medium text-cond">Conditional</span>: a rule that applies only if the certificate covers that case. <span className="font-medium text-ink-soft">Note</span>: a hint.
                     </p>
                 </div>
 
@@ -4095,8 +4157,9 @@ const App: React.FC = () => {
                         <div className="flex items-center gap-1.5">
                             <button type="button" onClick={() => setXmlOpen(o => !o)} aria-expanded={xmlOpen} className="btn-quiet btn-sm"><Icon name="eye" size={14} /> {xmlOpen ? 'Hide' : 'View'}</button>
                             {xmlOpen && <button onClick={() => { navigator.clipboard?.writeText(xmlPreview).then(() => showToast('XML copied to the clipboard.', 'converted')).catch(() => setError('The browser did not allow copying. Select the text and press Ctrl+C instead.')); }} className="btn-quiet btn-sm"><Icon name="copy" size={14} /> Copy</button>}
+                            {/* Save XML and Save HTML are the same kind of action, so they look the same. */}
                             {isValid
-                                ? <button onClick={handleExport} className="btn-primary btn-sm" title="Save the DRMD XML"><Icon name="download" size={14} /> Save XML</button>
+                                ? <button onClick={handleExport} className="btn-secondary btn-sm" title="Save the DRMD XML"><Icon name="download" size={14} /> Save XML</button>
                                 : <button onClick={handleExport} className="btn-secondary btn-sm" title="The file will not pass DRMD validation until the errors are fixed. Import it again later to finish it."><Icon name="download" size={14} /> Save XML (with errors)</button>}
                         </div>
                     </div>
@@ -4195,16 +4258,18 @@ const App: React.FC = () => {
   const pendingChecks = useMemo(() => {
       const byTab: Record<string, number> = {};
       const seen = new Set<string>();
-      let total = 0;
+      let total = 0, verified = 0;
       for (const item of collectVerifiable(deferredDoc)) {
-          if (verifyApi.status(item.value, item.source) !== 'check') continue;
-          const key = `${item.tab}|${verifyNorm(item.value)}`;
+          const status = verifyApi.status(item.value, item.source, item.kind);
+          if (!status) continue;
+          const key = `${status}|${item.tab}|${verifyNorm(item.value)}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          if (status === 'checked') { verified++; continue; }
           byTab[item.tab] = (byTab[item.tab] || 0) + 1;
           total++;
       }
-      return { byTab, total };
+      return { byTab, total, verified };
   }, [deferredDoc, verifyApi]);
   const firstTabToCheck = TABS.find(t => pendingChecks.byTab[t.id])?.id;
   const isBlank = drmdData === blankDocRef.current;
@@ -4236,7 +4301,7 @@ const App: React.FC = () => {
           <button onClick={handleOpenFolder} disabled={busy} className="btn-secondary" title={canWriteFolders ? "Convert every PDF in a folder with AI. The XML and HTML files are saved into the same folder." : "Convert every PDF in a folder with AI, one after another"} aria-label="Upload folder">
             <Icon name="folder" /> <span className="max-lg:hidden">Upload folder</span>
           </button>
-          <button onClick={() => xmlInputRef.current?.click()} disabled={busy} className="btn-secondary" title="Open an existing DRMD XML file for editing" aria-label="Import XML">
+          <button onClick={() => confirmFolderClose(() => xmlInputRef.current?.click())} disabled={busy} className="btn-secondary" title="Open an existing DRMD XML file for editing" aria-label="Import XML">
             <Icon name="import" /> <span className="max-lg:hidden">Import XML</span>
           </button>
           <span className="w-px h-6 bg-line mx-1" aria-hidden="true" />
@@ -4406,13 +4471,32 @@ const App: React.FC = () => {
              <div ref={toastRef} data-testid="source-notice" data-position={toastAtTop ? 'top' : 'bottom'} className={`absolute ${toastAtTop ? 'top-14' : 'bottom-4'} left-1/2 -translate-x-1/2 z-50 w-[min(520px,calc(100%-2rem))] rounded-md bg-white shadow-float border-l-[3px] px-4 py-3 flex items-start gap-3 ${
                  toastType === 'converted' ? 'border-petrol-600' : toastType === 'generated' ? 'border-check' : 'border-note'
              }`} role="status">
-                 <Icon name={toastType === 'converted' ? 'refresh' : 'alert'} className={`mt-0.5 ${toastType === 'converted' ? 'text-petrol-600' : 'text-check'}`} />
+                 <Icon name={toastType === 'converted' ? 'refresh' : 'alert'} className={`mt-0.5 shrink-0 ${toastType === 'converted' ? 'text-petrol-600' : 'text-check'}`} />
+                 {toastConversion ? (
+                   // A value converted for machine readability: what the PDF prints, what the XML writes, and why.
+                   <div className="flex-1 min-w-0 text-sm text-ink" data-testid="conversion-panel" aria-label={toastMessage}>
+                     <p className="font-semibold">Converted for machine readability</p>
+                     <p className="mt-1">
+                       {toastConversion.printed
+                         ? <>“<span className="font-medium" data-testid="conversion-printed">{toastConversion.printed}</span>” in the PDF is written as </>
+                         : <>The XML writes this as </>}
+                       <code className="px-1 py-px rounded-sm bg-petrol-50 text-petrol-800 font-mono text-xs break-all" data-testid="conversion-written">{toastConversion.written}</code>.
+                     </p>
+                     <p className="mt-1 text-ink-soft">
+                       {toastConversion.reason}
+                       {toastLink && safeHttpUrl(toastLink.href) && (
+                         <> <a href={safeHttpUrl(toastLink.href)} target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">{toastLink.label}</a></>
+                       )}
+                     </p>
+                   </div>
+                 ) : (
                  <span className="flex-1 text-sm text-ink">
                    {toastMessage}
                    {toastLink && safeHttpUrl(toastLink.href) && (
                      <> <a href={safeHttpUrl(toastLink.href)} target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">{toastLink.label}</a></>
                    )}
                  </span>
+                 )}
                  <button onClick={() => setToastMessage(null)} className="icon-btn -mr-1 -mt-1" title="Dismiss" aria-label="Dismiss"><Icon name="x" /></button>
              </div>
           )}
@@ -4502,7 +4586,7 @@ const App: React.FC = () => {
                       <span className="text-ink">
                           <strong className="font-semibold">{pendingChecks.byTab[activeTab]} value{pendingChecks.byTab[activeTab] === 1 ? ' is' : 's are'} outlined in amber.</strong>{' '}
                           The generator could not find {pendingChecks.byTab[activeTab] === 1 ? 'it' : 'them'} word for word in the PDF text, so {pendingChecks.byTab[activeTab] === 1 ? 'it needs' : 'they need'} a quick look.
-                          This also happens with correct values, for example when the PDF writes a number differently or the AI converted it.
+                          This also happens with correct values, for example when the AI joined or reworded text. Values only converted for machine readability (95 % as 0.95, a decimal comma, a country code) are not outlined.
                           Compare each one with the certificate and tick its box.
                       </span>
                   </div>
@@ -4541,8 +4625,22 @@ const App: React.FC = () => {
           onConfirm={startNewDrmd}
         >
           The form and the PDF on the left are cleared. If you still need the current DRMD, save it first on Validate &amp; export.
-          {bulkResults.length > 0 && ' The folder results stay in their list.'}
+          {bulkResults.length > 0 && (unsavedFolderResults > 0
+            ? ` The folder results are closed too. ${unsavedFolderResults === 1 ? 'One converted certificate exists' : `${unsavedFolderResults} converted certificates exist`} only in this tab: download ${unsavedFolderResults === 1 ? 'it' : 'them'} first with “Download all as ZIP” on Validate & export.`
+            : ` The folder results are closed too; their XML and HTML files stay in the folder${bulkFolderName ? ` ${bulkFolderName}` : ''}.`)}
           {pendingUpload && ' The PDF waiting for an API key is dropped.'}
+        </ConfirmDialog>
+      )}
+
+      {folderCloseAsk && (
+        <ConfirmDialog
+          title="Close the folder results?"
+          confirmLabel="Close them and continue"
+          onCancel={() => setFolderCloseAsk(null)}
+          onConfirm={() => { const next = folderCloseAsk; setFolderCloseAsk(null); next.run(); }}
+        >
+          {unsavedFolderResults === 1 ? 'One converted certificate of the folder run exists' : `${unsavedFolderResults} converted certificates of the folder run exist`} only in this tab.
+          Opening another document closes the folder results, and {unsavedFolderResults === 1 ? 'it is' : 'they are'} lost unless you download {unsavedFolderResults === 1 ? 'it' : 'them'} first with “Download all as ZIP” on Validate &amp; export.
         </ConfirmDialog>
       )}
 
@@ -4563,7 +4661,7 @@ const App: React.FC = () => {
           ) : (
             <><span className="dot bg-ok" /><span className="text-ink">Valid DRMD 1.0.0</span></>
           )}
-          {!isBlank && liveReport.conditionalErrors.length > 0 && <span>· {liveReport.conditionalErrors.length} to check</span>}
+          {!isBlank && liveReport.conditionalErrors.length > 0 && <span>· {liveReport.conditionalErrors.length} conditional</span>}
           {!isBlank && liveReport.warnings.length > 0 && <span>· {liveReport.warnings.length} note{liveReport.warnings.length === 1 ? '' : 's'}</span>}
         </button>
         {bulkResults.length > 0 && (
@@ -5060,9 +5158,9 @@ const FieldShell: React.FC<{ label: string; docs?: string; onInfoClick?: () => v
 };
 
 /** Verification state for a PDF-linked field, and an onChange that counts an edit as checked. */
-const useVerify = (enabled: boolean, value: unknown, source: unknown, onChange: (v: string) => void) => {
+const useVerify = (enabled: boolean, value: unknown, source: unknown, onChange: (v: string) => void, kind?: ValueKind) => {
     const api = React.useContext(VerifyContext);
-    const status = enabled ? api.status(value, source) : null;
+    const status = enabled ? api.status(value, source, kind) : null;
     const toggle = () => api.setChecked(value, status === 'check');
     // A value the user typed is their own: it no longer needs a check.
     const change = (v: string) => { if (status) api.setChecked(v, true); onChange(v); };
@@ -5071,8 +5169,8 @@ const useVerify = (enabled: boolean, value: unknown, source: unknown, onChange: 
 
 const CHECK_FIELD = 'border-check bg-check-bg/50 hover:border-check';
 
-const Input: React.FC<{ label: string; value: any; onChange: (v: string) => void; type?: string; disabled?: boolean; onInfoClick?: () => void; onFocus?: () => void; docs?: string; placeholder?: string; mono?: boolean; source?: string; noVerify?: boolean }> = ({ label, value, onChange, type = "text", disabled, onInfoClick, onFocus, docs, placeholder, mono, source, noVerify }) => {
-    const v = useVerify(!!onInfoClick && !noVerify && type === 'text', value, source, onChange);
+const Input: React.FC<{ label: string; value: any; onChange: (v: string) => void; type?: string; disabled?: boolean; onInfoClick?: () => void; onFocus?: () => void; docs?: string; placeholder?: string; mono?: boolean; source?: string; noVerify?: boolean; verifyKind?: ValueKind }> = ({ label, value, onChange, type = "text", disabled, onInfoClick, onFocus, docs, placeholder, mono, source, noVerify, verifyKind }) => {
+    const v = useVerify(!!onInfoClick && !noVerify && type === 'text', value, source, onChange, verifyKind);
     const { autoLocate } = React.useContext(PdfLinkContext);
     return (
         <FieldShell label={label} docs={docs} onInfoClick={onInfoClick} verify={v.status} onVerifyToggle={v.toggle}>
@@ -5195,8 +5293,8 @@ const DsiCell: React.FC<{ unit: string; dsi: string; busy?: boolean; onFocus: ()
  * An editable table cell; flagged like the fields when the value is not in the PDF. `problem`: what is
  * wrong with the value as typed (the same rules the XML is written with), shown right under the cell.
  */
-const CellInput: React.FC<{ value: any; onChange: (v: string) => void; onFocus?: () => void; ariaLabel: string; align?: 'left' | 'right'; problem?: string; placeholder?: string; title?: string }> = ({ value, onChange, onFocus, ariaLabel, align = 'left', problem, placeholder, title }) => {
-    const v = useVerify(true, value, undefined, onChange);
+const CellInput: React.FC<{ value: any; onChange: (v: string) => void; onFocus?: () => void; ariaLabel: string; align?: 'left' | 'right'; problem?: string; placeholder?: string; title?: string; verifyKind?: ValueKind }> = ({ value, onChange, onFocus, ariaLabel, align = 'left', problem, placeholder, title, verifyKind }) => {
+    const v = useVerify(true, value, undefined, onChange, verifyKind);
     const { autoLocate } = React.useContext(PdfLinkContext);
     const msgId = React.useId();
     return (
