@@ -20,9 +20,10 @@ module.exports = {
           50: '#eef5f7', 100: '#d7e8ed', 200: '#afd0da', 300: '#7fb1c1',
           500: '#2f7487', 600: '#1d6276', 700: '#174f60', 800: '#123f4c', 900: '#0d2f39',
         },
-        // Status colours carry meaning: conform / check (conditional) / error / note
+        // Status colours carry meaning: conform / value to verify (AI conversion) / conditional rule / error / note
         ok: { DEFAULT: '#2c7349', bg: '#e9f4ed', line: '#b9dcc5' },
         check: { DEFAULT: '#94560a', bg: '#fbf1e2', line: '#efd1a6' },
+        cond: { DEFAULT: '#574a8f', bg: '#f1effa', line: '#d4cdee' },
         bad: { DEFAULT: '#b3261e', bg: '#fcebea', line: '#f2c3bf' },
         note: { DEFAULT: '#6d5d10', bg: '#faf5dc', line: '#e8dc9c' },
         marker: '#ffd84d',

@@ -101,6 +101,7 @@
   .tag { @apply inline-flex items-center gap-1.5 h-[22px] px-2 rounded-sm text-2xs font-medium whitespace-nowrap border; }
   .tag-ok { @apply tag bg-ok-bg text-ok border-ok-line; }
   .tag-check { @apply tag bg-check-bg text-check border-check-line; }
+  .tag-cond { @apply tag bg-cond-bg text-cond border-cond-line; }
   .tag-bad { @apply tag bg-bad-bg text-bad border-bad-line; }
   .tag-neutral { @apply tag bg-sunken text-ink-muted border-line; }
   .tag-active { @apply tag bg-petrol-50 text-petrol-700 border-petrol-200; }
