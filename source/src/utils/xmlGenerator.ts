@@ -3,13 +3,13 @@
 
 import { DRMD, Identifier, rmDocumentName } from "../types";
 import { resolveDsiUnit } from "./unitConverter";
-import { checkDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, toDsi, unitTextNotes } from "./dsi";
+import { checkDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, toDsi, unitTextNotes, unitWriting, hybridValue, writtenValueText } from "./dsi";
 import { safeHttpUrl } from "./safeUrl";
 import { DRMD_SCHEMA_VERSION } from "./drmdBusinessRules";
 import { formStateJson } from "./formState";
 import {
     toDecimalString, readNumber, toUncertaintyString, toCoverageFactor, toCoverageProbability, toXsdDate,
-    toCountryCode, notEmpty, isNoQuantityPlaceholder, isPlaceholderText,
+    toCountryCode, notEmpty, isNoQuantityPlaceholder, isPlaceholderText, shiftDecimal,
 } from "./xmlValues";
 
 /*
@@ -289,13 +289,21 @@ ${content(p.description, '          ')}
         const match = text.match(/^(\S+)\s*(\S.*)$/);
         const num = match ? toDecimalString(match[1]) : null;
         const conv = match && num !== null ? resolveDsiUnit(match[2]) : null;
-        if (num !== null && conv) {
-            // The number exactly as written: the unit is only renamed into its D-SI form
-            body = `
-          <si:real>
-            <si:value>${num}</si:value>
-            <si:unit>${escapeXml(conv.dsiUnit)}</si:unit>
-          </si:real>`;
+        if (num !== null && conv && match) {
+            // The number as written with the D-SI unit; a power of ten of the unit goes into the number, and a
+            // unit outside the SI is written in si:hybrid (the SI value first, then the value as printed)
+            const w = unitWriting(match[2], conv.dsiUnit);
+            const elem = (value: string, unit: string, indent = '') => `
+${indent}          <si:real>
+${indent}            <si:value>${value}</si:value>
+${indent}            <si:unit>${escapeXml(unit.replace(/\s+/g, ''))}</si:unit>
+${indent}          </si:real>`;
+            const si = w.ok && w.hybrid ? (w.hybrid.def ? hybridValue(num, w.hybrid.def) : shiftDecimal(num, w.valueExp)) : null;
+            body = w.ok && w.hybrid && si !== null
+                ? `
+          <si:hybrid>${elem(si, conv.dsiUnit, '  ')}${elem(num, w.hybrid.asWritten, '  ')}
+          </si:hybrid>`
+                : w.ok && w.hybrid ? elem(num, match[2]) : elem(w.ok ? shiftDecimal(num, w.valueExp) : num, conv.dsiUnit);
         } else {
             // "approx. 50 g", "0.5 - 1 g", "50 µL for UV spectrophotometry": keep the wording as text
             body = `
@@ -448,14 +456,22 @@ ${content(mat.description, '        ')}
             if (syntax.length) note('DSI-UNIT-NOTE', 'warning', 'Properties', `${where}: ${conv.dsiUnit}: ${issuesText(syntax)}`);
             // Words of the unit text that a D-SI unit cannot hold (analyte, basis, "as N", pH): the
             // quantity name has to carry them, or the XML loses them.
-            const lost = rawUnit ? unitTextNotes(rawUnit).filter(n => !String(q.name ?? '').toLowerCase().includes(n.text.toLowerCase().replace(/^[([]|[)\]]$/g, ''))) : [];
+            const lost = rawUnit ? unitTextNotes(rawUnit).filter(n => n.type !== 'reference' && !String(q.name ?? '').toLowerCase().includes(n.text.toLowerCase().replace(/^[([]|[)\]]$/g, ''))) : [];
             if (lost.length) {
                 note('DSI-UNIT-ANNOTATION', 'warning', 'Properties',
                     `${where}: the unit "${rawUnit}" contains ${lost.map(n => `"${n.text}"`).join(', ')}, which is not part of a unit (a D-SI unit is built only from unit, prefix and exponent identifiers, D-SI guide Section 3, pp. 12–17). ` +
                     `The value is written with ${conv.dsiUnit}; state ${lost.length > 1 ? 'them' : 'it'} in the quantity name so that the XML keeps ${lost.length > 1 ? 'them' : 'it'}.`);
             }
         }
-        const scale = (d: string) => d;
+        // How the value is written with this D-SI unit (see unitWriting in dsi.ts): unchanged; with a power
+        // of ten in the number ("× 10³ g/mol" → 196.4e3, "% (w/v)" → g/L times 10); or in si:hybrid, first
+        // in an SI unit and then exactly as printed (lb, °F, psi …, and ppb or ‰ without the kind of
+        // fraction); with si:label (isotope delta values) and si:quantityTypeQUDT (%, ppm of a stated kind).
+        const writing = conv ? unitWriting(rawUnit || '\\one', unitOut, unitCtx) : null;
+        const w = writing && writing.ok ? writing : null;
+        const exp = w ? w.valueExp : 0;
+        const hybrid = w?.hybrid ?? null;
+        const scale = (d: string) => shiftDecimal(d, exp);
 
         // A number that cannot be read safely ("1,234": decimal comma or thousands separator?) is not
         // written as a number at all: a wrong reading would change the value by a factor of 1000.
@@ -474,37 +490,54 @@ ${content(`${raw}${humanUnit}`, '                  ')}
             note('VALUE-DIGIT-GROUPS', 'warning', 'Properties',
                 `${where}: the value "${raw}" is written as ${reading.value} (${reading.grouped === 'digit-groups' ? 'digit groups' : 'thousands separators'} removed; si:value has no separators, rule R003, D-SI guide p. 70). Check that it is one number.`);
         }
+        const writtenNotes = (shown: string) => {
+            if (!w) return;
+            if (w.kindUnknown) {
+                note('DSI-KIND-UNKNOWN', 'warning', 'Properties',
+                    `${where}: "${rawUnit}" does not say whether it is a mass, an amount-of-substance or a volume fraction, so the kind of quantity is ambiguous. ` +
+                    `It is written in si:hybrid (${shown}). State the kind of fraction in the quantity name or the table, and it is written as a unit of that kind.`);
+            } else if (hybrid?.def) {
+                note('DSI-UNIT-HYBRID', 'warning', 'Properties',
+                    `${where}: "${rawUnit}" is not a unit of the SI, so the value is written in si:hybrid (D-SI guide Section 7, p. 33): ${shown}. ` +
+                    `The SI value is converted with ${hybrid.def.definition}${hybrid.def.pow === undefined ? ', rounded two digits finer than the printed value' : ''}; check it.`);
+            } else if (hybrid && w.label && !/VPDB|SMOW|SLAP|CDT|AIR| vs /.test(label)) {
+                note('DSI-DELTA-REFERENCE', 'warning', 'Properties',
+                    `${where}: the isotope delta value is written with si:label "${label}", but the reference scale (VPDB, VSMOW …) is not stated in the unit or the description. Add it to the quantity name.`);
+            } else if (!hybrid && exp && toDsi(rawUnit, unitCtx).kind === 'massConcentration') {
+                note('DSI-VALUE-SCALED', 'warning', 'Properties',
+                    `${where}: "${rawUnit}" is a mass concentration (1 % (w/v) = 1 g per 100 mL = 10 g/L), so the value is written in ${unitOut} with the number times 10: ${shown}.`);
+            }
+        };
+        // si:label and si:quantityTypeQUDT: as the rules decide, or as read from an XML file (kept when it is opened again)
+        const fileLabel = typeof q.label === 'string' ? q.label.trim() : '';
+        const label = fileLabel || w?.label || '';
+        const fileKind = typeof q.quantityKind === 'string' && /^[A-Z][A-Za-z0-9_]{1,80}$/.test(q.quantityKind.trim()) ? q.quantityKind.trim() : '';
+        const qudt = w?.qudt || (fileKind && conv ? fileKind : '');
+        const realHead = (indent: string) => `${label ? `
+${indent}  <si:label>${escapeXml(label)}</si:label>` : ''}${qudt ? `
+${indent}  <si:quantityTypeQUDT>${escapeXml(qudt)}</si:quantityTypeQUDT>` : ''}`;
 
-        // 1. A single number → si:real
+        // 1. A single number → si:real (or si:hybrid of two si:real)
         const num = reading.value;
         if (num !== null) {
-            let xml = `
-                <si:real>
-                  <si:value>${scale(num)}</si:value>
-                  <si:unit>${escapeXml(unitOut.replace(/\s+/g, ''))}</si:unit>`;
+            // The uncertainty, decided per row: k and p both given → expanded uncertainty (si:expandedMU);
+            // neither given → standard uncertainty (si:standardMU), which D-SI defines without k and p;
+            // only one of them (or an invalid one) → error, because the row is clearly meant as an
+            // expanded uncertainty but cannot be written as one.
             const hasUnc = notEmpty(q.uncertainty) !== null;
+            const u = hasUnc ? toUncertaintyString(q.uncertainty) : null;
+            const k = toCoverageFactor(q.coverageFactor);
+            const p = toCoverageProbability(q.coverageProbability);
+            const noK = notEmpty(q.coverageFactor) === null;
+            const noP = notEmpty(q.coverageProbability) === null;
+            let uncMode: 'none' | 'standard' | 'expanded' = 'none';
             if (hasUnc) {
-                const u = toUncertaintyString(q.uncertainty);
-                const k = toCoverageFactor(q.coverageFactor);
-                const p = toCoverageProbability(q.coverageProbability);
-                // Decided per row: k and p both given → expanded uncertainty (si:expandedMU);
-                // neither given → standard uncertainty (si:standardMU), which D-SI defines without
-                // k and p; only one of them (or an invalid one) → error, because the row is
-                // clearly meant as an expanded uncertainty but cannot be written as one.
-                const noK = notEmpty(q.coverageFactor) === null;
-                const noP = notEmpty(q.coverageProbability) === null;
                 if (u === null) {
                     note('XSD-UNCERTAINTY-INVALID', 'error', 'Properties',
                         `${where}: the uncertainty "${q.uncertainty}" is not a single non-negative number, so it cannot be written as a D-SI uncertainty.`);
                 } else if (noK && noP) {
                     standardUncRows.push(where);
-                    xml += `
-                  <si:measurementUncertaintyUnivariate>
-                    <si:standardMU>
-                      <si:valueStandardMU>${scale(u)}</si:valueStandardMU>${notEmpty(q.distribution) ? `
-                      <si:distribution>${escapeXml(notEmpty(q.distribution))}</si:distribution>` : ''}
-                    </si:standardMU>
-                  </si:measurementUncertaintyUnivariate>`;
+                    uncMode = 'standard';
                 } else if (k === null || p === null) {
                     const missing = [k === null ? `coverage factor k${notEmpty(q.coverageFactor) ? ` ("${q.coverageFactor}" is not valid)` : ''}` : '',
                                      p === null ? `coverage probability P${notEmpty(q.coverageProbability) ? ` ("${q.coverageProbability}" is not valid)` : ''}` : '']
@@ -512,21 +545,46 @@ ${content(`${raw}${humanUnit}`, '                  ')}
                     note('XSD-UNCERTAINTY-INCOMPLETE', 'error', 'Properties',
                         `${where}: the uncertainty ${q.uncertainty} has no ${missing}. An expanded uncertainty must be accompanied by values for k and P ` +
                         `(si:expandedMU). You may leave k and P blank if the uncertainty is a standard uncertainty (si:standardMU). Please correct.`);
-                } else {
-                    xml += `
+                } else uncMode = 'expanded';
+            }
+            const distribution = notEmpty(q.distribution) ? `
+                      <si:distribution>${escapeXml(notEmpty(q.distribution))}</si:distribution>` : '';
+            const uncXml = (uv: string | null, indent: string): string => {
+                if (uv === null || uncMode === 'none') return '';
+                const body = uncMode === 'standard' ? `
+                  <si:measurementUncertaintyUnivariate>
+                    <si:standardMU>
+                      <si:valueStandardMU>${uv}</si:valueStandardMU>${distribution}
+                    </si:standardMU>
+                  </si:measurementUncertaintyUnivariate>` : `
                   <si:measurementUncertaintyUnivariate>
                     <si:expandedMU>
-                      <si:valueExpandedMU>${scale(u)}</si:valueExpandedMU>
+                      <si:valueExpandedMU>${uv}</si:valueExpandedMU>
                       <si:coverageFactor>${k}</si:coverageFactor>
-                      <si:coverageProbability>${p}</si:coverageProbability>${notEmpty(q.distribution) ? `
-                      <si:distribution>${escapeXml(notEmpty(q.distribution))}</si:distribution>` : ''}
+                      <si:coverageProbability>${p}</si:coverageProbability>${distribution}
                     </si:expandedMU>
                   </si:measurementUncertaintyUnivariate>`;
+                return indent ? body.replace(/\n/g, `\n${indent}`) : body;
+            };
+            const real = (value: string, unit: string, uv: string | null, indent = '') => `
+${indent}                <si:real>${realHead(`${indent}                `)}
+${indent}                  <si:value>${value}</si:value>
+${indent}                  <si:unit>${escapeXml(unit.replace(/\s+/g, ''))}</si:unit>${uncXml(uv, indent)}
+${indent}                </si:real>`;
+            if (hybrid) {
+                const siValue = hybrid.def ? hybridValue(num, hybrid.def) : shiftDecimal(num, exp);
+                const siUnc = u === null ? null : hybrid.def ? hybridValue(u, hybrid.def, true) : shiftDecimal(u, exp);
+                if (siValue !== null && (u === null || siUnc !== null)) {
+                    writtenNotes(writtenValueText(num, unitOut, w));
+                    return `
+                <si:hybrid>${real(siValue, unitOut, siUnc, '  ')}${real(num, hybrid.asWritten, u, '  ')}
+                </si:hybrid>`;
                 }
+                note('XSD-UNIT', 'warning', 'Properties', `${where}: the unit "${rawUnit}" is written as typed, because the value could not be converted for si:hybrid.`);
+                return real(num, rawUnit, u);
             }
-            xml += `
-                </si:real>`;
-            return xml;
+            writtenNotes(`${scale(num)} ${unitOut}`);
+            return real(scale(num), unitOut, u === null ? null : scale(u));
         }
 
         const parts = raw.split(/\s+/);
@@ -535,12 +593,27 @@ ${content(`${raw}${humanUnit}`, '                  ')}
         const listNums = parts.map(toDecimalString);
         if (parts.length > 1 && listNums.every(n => n !== null)) {
             uncertaintyNotWritten();
-            const u = (unitOut || '\\one').replace(/\s+/g, '');
-            return `
-                <si:realListXMLList>
-                  <si:valueXMLList>${listNums.map(n => scale(n as string)).join(' ')}</si:valueXMLList>
-                  <si:unitXMLList>${escapeXml(parts.map(() => u).join(' '))}</si:unitXMLList>
-                </si:realListXMLList>`;
+            const nums = listNums as string[];
+            const list = (values: string[], unit: string, indent = '') => `
+${indent}                <si:realListXMLList>
+${indent}                  <si:valueXMLList>${values.join(' ')}</si:valueXMLList>
+${indent}                  <si:unitXMLList>${escapeXml(values.map(() => unit).join(' '))}</si:unitXMLList>
+${indent}                </si:realListXMLList>`;
+            if (hybrid) {
+                // si:hybrid of two lists (D-SI guide Figure 7.2, p. 35); a unit as printed with a space cannot be a list item
+                const siValues = nums.map(n => (hybrid.def ? hybridValue(n, hybrid.def) : shiftDecimal(n, exp)));
+                if (!/\s/.test(hybrid.asWritten) && siValues.every(v => v !== null)) {
+                    writtenNotes(`${siValues.join(' ')} ${unitOut} and ${nums.join(' ')} ${hybrid.asWritten}`);
+                    return `
+                <si:hybrid>${list(siValues as string[], unitOut, '  ')}${list(nums, hybrid.asWritten, '  ')}
+                </si:hybrid>`;
+                }
+                note('XSD-UNIT', 'warning', 'Properties', `${where}: the unit "${rawUnit}" is written as typed, because the list of values cannot be written in si:hybrid.`);
+                return list(nums, rawUnit.replace(/\s+/g, ''));
+            }
+            const unitList = (unitOut || '\\one').replace(/\s+/g, '');
+            writtenNotes(`${nums.map(scale).join(' ')} ${unitList}`);
+            return list(nums.map(scale), unitList);
         }
 
         // 3. A list of codes → dcc:charsXMLList

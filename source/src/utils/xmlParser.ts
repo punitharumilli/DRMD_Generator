@@ -73,6 +73,12 @@ const withUsualPrefixes = (doc: Document): Document => {
  * documents) and the layout earlier versions of the app wrote (drmd:real, material/@id, lot_* ids,
  * raw base64 in drmd:document), so previously exported files still import.
  */
+/** In si:hybrid: the element with the value as printed (a unit that is not D-SI), else the last one. */
+const asPrinted = (reals: Element[]): Element | undefined => {
+    const unit = (r: Element) => (r.getElementsByTagName("si:unit")[0]?.textContent ?? '').trim();
+    return reals.find(r => unit(r) && !unit(r).startsWith('\\')) ?? reals[reals.length - 1];
+};
+
 export const parseDrmdXml = (xmlString: string): DRMD => {
     const parser = new DOMParser();
     const parsed = parser.parseFromString(xmlString, "text/xml");
@@ -225,8 +231,10 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
                 const itemQ = container.getElementsByTagName("dcc:itemQuantity")[0];
                 if (!itemQ) return "";
                 
-                // Value + unit (si:real; drmd:real in files from earlier versions)
-                const real = itemQ.getElementsByTagName("si:real")[0] || itemQ.getElementsByTagName("drmd:real")[0];
+                // Value + unit (si:real; drmd:real in files from earlier versions). In si:hybrid the value as
+                // printed is the element with a unit that is not D-SI (the SI element comes first).
+                const reals = Array.from(itemQ.getElementsByTagName("si:real"));
+                const real = (itemQ.getElementsByTagName("si:hybrid")[0] ? asPrinted(reals) : reals[0]) || itemQ.getElementsByTagName("drmd:real")[0];
                 if (real) {
                     const val = getNestedContent(real, ["si:value"]);
                     const unit = getNestedContent(real, ["si:unit"]);
@@ -341,12 +349,22 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
                     const quant: Quantity = { ...INITIAL_QUANTITY, uuid: uuid(), identifiers: [] };
                     quant.name = getNestedContent(q, ["dcc:name", "dcc:content"]);
                     
-                    const real = q.getElementsByTagName("si:real")[0];
+                    // si:hybrid: the value as printed (a unit that is not D-SI) goes into the form, with the
+                    // D-SI unit of the first (SI) element; the generator writes the SI element again from them.
+                    const hybrid = q.getElementsByTagName("si:hybrid")[0];
+                    const reals = Array.from(q.getElementsByTagName("si:real"));
+                    const real = hybrid ? asPrinted(reals) : reals[0];
                     if (real) {
                         quant.value = getNestedContent(real, ["si:value"]);
                         quant.unit = getNestedContent(real, ["si:unit"]);
                         // A unit that is not D-SI (written as typed) is not shown as the D-SI unit
-                        quant.dsiUnit = quant.unit.trim().startsWith('\\') ? quant.unit.trim() : '';
+                        const siUnit = hybrid && reals[0] ? getNestedContent(reals[0], ["si:unit"]).trim() : quant.unit.trim();
+                        quant.dsiUnit = siUnit.startsWith('\\') ? siUnit : '';
+                        // si:label and si:quantityTypeQUDT are kept, so that the file is written again with them
+                        const label = getNestedContent(real, ["si:label"]).trim();
+                        if (label) quant.label = label;
+                        const kind = getNestedContent(reals[0] || real, ["si:quantityTypeQUDT"]).trim();
+                        if (kind) quant.quantityKind = kind;
                         quant.dsiValue = quant.value;
                         
                         const expandedMU = real.getElementsByTagName("si:expandedMU")[0];
@@ -371,9 +389,14 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
                             quant.value = getNestedContent(noQ, ["dcc:content"]);
                             quant.unit = "";
                         } else if (realList) {
-                            quant.value = getNestedContent(realList, ["si:valueXMLList"]).trim();
-                            quant.unit = (getNestedContent(realList, ["si:unitXMLList"]).trim().split(/\s+/)[0]) || "";
-                            quant.dsiUnit = quant.unit.startsWith('\\') ? quant.unit : '';
+                            // In si:hybrid of lists, the list as printed is the one whose unit is not D-SI
+                            const lists = Array.from(q.getElementsByTagName("si:realListXMLList"));
+                            const unitOf = (l: Element) => (getNestedContent(l, ["si:unitXMLList"]).trim().split(/\s+/)[0]) || "";
+                            const printed = hybrid ? (lists.find(l => !unitOf(l).startsWith('\\')) || lists[lists.length - 1]) : realList;
+                            quant.value = getNestedContent(printed, ["si:valueXMLList"]).trim();
+                            quant.unit = unitOf(printed);
+                            const siUnit = unitOf(lists[0]);
+                            quant.dsiUnit = siUnit.startsWith('\\') ? siUnit : '';
                         } else if (chars) {
                             quant.value = (chars.textContent || "").trim();
                             quant.unit = "";

@@ -16,12 +16,20 @@
  *    \ppm, \bit, \byte, the binary prefixes, \ronna, \quetta, \ronto, \quecto and the division
  *    operator \per. These are marked `dsi2` and named as such wherever they are explained.
  *
- * The one principle of everything here: a value from the certificate is never changed. A unit is only
- * ever written as a D-SI expression of exactly the same size. Where that needs an SI prefix or a unit
- * of a lower quality class, the class is lower; where no such expression exists, the unit stays as it
- * is (class "improvable") instead of being converted with a factor. A unit is converted only when it
- * can be read in one way: an element symbol, a hardness scale or "dBm" is never taken for SI symbols.
+ * The principle: the digits printed in the certificate are never changed by chance. A unit is written
+ * as a D-SI expression of exactly the same size wherever one exists (a lower quality class is accepted
+ * for that). Three exceptions, each exact and explained to the user (as reviewed with the D-SI experts):
+ *  - a power of ten written with the unit ("× 10³ g/mol") goes into the number as an exponent
+ *    ("196.4e3", rule R003), so the digits stay as printed;
+ *  - "% (w/v)" is a mass concentration, written in g/L with the number times 10 (as an exponent);
+ *  - a unit outside the SI with a defined SI conversion (lb, °F, psi, Oe …), and ppb or ‰ whose kind of
+ *    fraction is not stated, are written in si:hybrid (D-SI guide Section 7): first the value in an SI
+ *    unit, then the value exactly as printed with the unit as printed.
+ * Where nothing of that applies, the unit stays as it is (class "improvable"). A unit is converted only
+ * when it can be read in one way: an element symbol, a hardness scale or "dBm" is never taken for SI symbols.
  */
+
+import { shiftDecimal, convertDecimal } from './xmlValues';
 
 // ─────────────────────────────── Sources and page numbers ───────────────────────────────
 
@@ -37,7 +45,8 @@ const PDF_PAGE_OFFSET = 4;
 /** Printed page of each rule, table and section of the D-SI guide that the generator applies. */
 export const GUIDE_PAGE: Record<string, number> = {
     'Section 3': 12, 'Table 3.1': 14, 'Semantics of prefixes': 14, 'Semantics of exponents': 15, 'Unit multiplication': 15,
-    'Table 3.2': 16, 'Syntax recommendations': 16, 'Section 4': 18, 'Value format': 19, 'Section 7': 31, 'Figure 7.2': 35,
+    'Table 3.2': 16, 'Syntax recommendations': 16, 'Section 4': 18, 'Value format': 19, 'Section 7': 31, 'Hybrid model': 33,
+    'Figure 7.1': 34, 'Figure 7.2': 35, 'Hybrid conversion': 36,
     'Conversion factors': 38, 'Section 8': 39, 'Table 5.1': 39, 'Platinum': 40, 'Gold': 40, 'Silver': 41, 'Bronze': 41,
     'Improvable': 41, 'Hybrid class': 41, 'Table A.1': 47, 'Table A.2': 48, 'Table A.3': 49, 'Table A.4': 52, 'Table A.5': 53,
     'Table A.6': 55, 'Appendix B': 56, 'Appendix C': 69,
@@ -401,6 +410,8 @@ interface SymbolDef {
     equiv?: Array<DsiToken & { pow: number }>;
     prefixable?: boolean;
     named?: string;
+    /** Read as this unit only when the description of the quantity is about this (emu: magnetism). */
+    needs?: 'magnetic';
 }
 
 const fromDsi = (id: string, prefixable = true, extra: Partial<SymbolDef> = {}): SymbolDef => {
@@ -436,12 +447,102 @@ const SYMBOLS: Record<string, SymbolDef> = {
         equiv: [{ unit: 'metre', exp: 2, pow: -2 }, { unit: 'second', exp: -1, pow: 0 }] },
     dyn: { factor: 1e-5, dim: dimOf(1, 1, -2), noDsi: 'dyne (CGS unit of force)' },
     erg: { factor: 1e-7, dim: dimOf(2, 1, -2), noDsi: 'erg (CGS unit of energy)' },
+    // The CGS electromagnetic unit has a different size for each quantity (NIST SP 811, Appendix B, lists
+    // the emu of current, voltage, resistance …). It is read only as the emu of magnetic moment,
+    // 1 emu = 1 erg/G = 10⁻³ A·m² (NIST, Units for Magnetic Properties), and only when the description of
+    // the quantity is about magnetism; then emu/g and emu/cm³ follow (1 A·m²/kg and 10³ A/m).
+    emu: { factor: 1e-3, dim: dimOf(2, 0, 0, 1), noDsi: 'emu (CGS electromagnetic unit; of magnetic moment 1 emu = 10⁻³ A·m²)', needs: 'magnetic',
+        equiv: [{ unit: 'ampere', exp: 1, pow: -3 }, { unit: 'metre', exp: 2, pow: 0 }] },
 };
+SYMBOLS.EMU = SYMBOLS.emu;
 // Prefix symbols read from certificate text (the 2022 prefixes are not: see DSI_PREFIXES)
 const PREFIX_SYMBOLS = DSI_PREFIXES.flatMap(p => p.symbol.map(sym => ({ sym, pow: p.pow }))).sort((a, b) => b.sym.length - a.sym.length);
 
-interface HumanToken { sym: string; def: SymbolDef; pow: number; exp: number; binary?: string }
-interface HumanUnit { tokens: HumanToken[]; pow10: number; denPow10: number }
+// ── Unit names and the usual abbreviations ──
+
+/**
+ * Unit names written in full are read as their symbols (SI brochure, 9th edition, 5.3): "Ohm", "kelvin",
+ * "litres", "milligram", "kilohm". Any case, because names are words, not symbols.
+ */
+const UNIT_NAMES: Record<string, string> = {};
+const unitNames = (sym: string, ...list: string[]) => list.forEach(n => { UNIT_NAMES[n] = sym; if (!/[sxz]$/.test(n)) UNIT_NAMES[`${n}s`] = sym; });
+unitNames('m', 'metre', 'meter'); unitNames('g', 'gram', 'gramme'); unitNames('s', 'second'); unitNames('min', 'minute'); unitNames('h', 'hour');
+unitNames('d', 'day'); unitNames('L', 'litre', 'liter'); unitNames('mol', 'mole'); unitNames('K', 'kelvin'); unitNames('A', 'ampere', 'amp');
+unitNames('cd', 'candela'); unitNames('V', 'volt'); unitNames('W', 'watt'); unitNames('J', 'joule'); unitNames('N', 'newton'); unitNames('Pa', 'pascal');
+unitNames('Hz', 'hertz'); unitNames('Ω', 'ohm'); unitNames('S', 'siemens'); unitNames('T', 'tesla'); unitNames('Wb', 'weber'); unitNames('H', 'henry');
+unitNames('F', 'farad'); unitNames('C', 'coulomb'); unitNames('Bq', 'becquerel'); unitNames('Gy', 'gray'); unitNames('Sv', 'sievert'); unitNames('kat', 'katal');
+unitNames('lm', 'lumen'); unitNames('lx', 'lux'); unitNames('rad', 'radian'); unitNames('sr', 'steradian'); unitNames('t', 'tonne'); unitNames('ha', 'hectare');
+unitNames('eV', 'electronvolt'); unitNames('Da', 'dalton'); unitNames('Å', 'angstrom', 'ångström'); unitNames('dB', 'decibel'); unitNames('Np', 'neper');
+unitNames('µm', 'micron'); unitNames('°', 'degree');
+Object.assign(UNIT_NAMES, { henries: 'H', kilohm: 'kΩ', kilohms: 'kΩ', megohm: 'MΩ', megohms: 'MΩ', gigohm: 'GΩ', gigohms: 'GΩ' });
+const PREFIX_NAMES: Array<[string, string]> = [['yotta', 'Y'], ['zetta', 'Z'], ['exa', 'E'], ['peta', 'P'], ['tera', 'T'], ['giga', 'G'], ['mega', 'M'],
+    ['kilo', 'k'], ['hecto', 'h'], ['deca', 'da'], ['deka', 'da'], ['deci', 'd'], ['centi', 'c'], ['milli', 'm'], ['micro', 'µ'], ['nano', 'n'], ['pico', 'p'],
+    ['femto', 'f'], ['atto', 'a'], ['zepto', 'z'], ['yocto', 'y']];
+/** Abbreviations that are not SI symbols but have one meaning in a unit text. Case matters: "Gm" is the gigametre, "gm" the gram. */
+const ABBREVIATIONS: Record<string, string> = {
+    sec: 's', secs: 's', Sec: 's', mins: 'min', Mins: 'min', hr: 'h', hrs: 'h', Hr: 'h', Hrs: 'h', mols: 'mol', gm: 'g', gms: 'g', mgm: 'mg',
+    mcg: 'µg', mcL: 'µL', mcl: 'µL', mcmol: 'µmol', ltr: 'L', ltrs: 'L', Ltr: 'L', amu: 'u', deg: '°', degs: '°',
+};
+/** A prefix symbol written on a name or abbreviation: "kOhm", "MOhm", "msec", "µsec", "mmols". */
+const PREFIXED_WORDS: Record<string, string> = { ohm: 'Ω', ohms: 'Ω', sec: 's', secs: 's', mols: 'mol' };
+
+/** The SI symbol for a unit name or a usual abbreviation ("Ohm" → Ω, "msec" → ms, "mcg" → µg), or null. */
+const wordSymbol = (word: string): string | null => {
+    if (ABBREVIATIONS[word]) return ABBREVIATIONS[word];
+    const lower = word.toLowerCase();
+    if (/^[a-zà-ÿ]{3,}$/i.test(word)) {
+        if (UNIT_NAMES[lower]) return UNIT_NAMES[lower];
+        for (const [name, sym] of PREFIX_NAMES) {
+            const rest = lower.slice(name.length);
+            if (lower.startsWith(name) && UNIT_NAMES[rest] && !/^(?:min|h|d|°|t|ha)$/.test(UNIT_NAMES[rest])) return sym + UNIT_NAMES[rest];
+        }
+    }
+    for (const p of PREFIX_SYMBOLS) {
+        if (!word.startsWith(p.sym) || word.length === p.sym.length) continue;
+        const rest = word.slice(p.sym.length);
+        const sym = PREFIXED_WORDS[rest.toLowerCase()];
+        if (sym && (rest === rest.toLowerCase() || /^ohms?$/i.test(rest))) return p.sym + sym;
+    }
+    return null;
+};
+
+/**
+ * Words of a unit text read as SI symbols before the symbols are read: degree Celsius in its spellings,
+ * percent, per mille, parts per million, "rpm" (revolutions per minute, written min⁻¹; the revolution is
+ * a count), "square"/"cubic" lengths.
+ */
+const WORD_RENAMES: Array<[RegExp, string]> = [
+    [/\bdeg(?:ree)?s?\.?\s*(?:C\b|celsius\b|centigrade\b)|°\s*celsius\b|\bcelsius\b|\bcentigrade\b/gi, '°C'],
+    [/\bdeg(?:ree)?s?\.?\s*(?:F\b|fahrenheit\b)|°\s*fahrenheit\b|\bfahrenheit\b/gi, '°F'],
+    [/\bdeg(?:ree)?s?\.?\s*(?:K\b|kelvin\b)|°\s*K\b/gi, 'K'],
+    [/\bper\s*cent\b|\bpercent\b/gi, '%'],
+    [/\bper\s*mill?e?\b|\bpermill?e?\b/gi, '‰'],
+    [/\bparts?\s+per\s+million\b/gi, 'ppm'],
+    [/\bparts?\s+per\s+billion\b/gi, 'ppb'],
+    [/\bmillimet(?:re|er)s?\s+of\s+mercury\b/gi, 'mmHg'],
+    [/\blpm\b|\bLPM\b/g, 'L/min'],
+    [/\brpm\b|\bRPM\b|\br\/min\b|\brev\/min\b/g, 'min^-1'],
+    [/\b(?:sq\.?|square)\s+([kcmµun]?m|(?:kilo|centi|milli|micro|nano)?met(?:re|er)s?)(?![A-Za-z^])/gi, '$1^2'],
+    [/\b(?:cu\.?|cubic)\s+([kcmµund]?m|(?:kilo|centi|milli|deci)?met(?:re|er)s?)(?![A-Za-z^])/gi, '$1^3'],
+];
+const applyWordRenames = (s: string): string => WORD_RENAMES.reduce((t, [re, to]) => t.replace(re, to), s);
+/** The words of a unit text that were read as symbols, as written → as read (for the explanation). */
+const wordRenamesIn = (raw: string): Array<[string, string]> => {
+    const out: Array<[string, string]> = [];
+    let s = String(raw ?? '').normalize('NFC');
+    for (const [re, to] of WORD_RENAMES) {
+        s = s.replace(re, (all, ...groups) => {
+            const read = to.replace('$1', typeof groups[0] === 'string' ? groups[0] : '');
+            out.push([all.trim(), read]);
+            return read;
+        });
+    }
+    return out;
+};
+
+interface HumanToken { sym: string; def: SymbolDef; pow: number; exp: number; binary?: string; /** A unit name or abbreviation, read as this symbol. */ spelled?: string }
+/** pow10: plain numbers of the unit ("per 100 g"); expPow: powers of ten written as such ("× 10³", "10⁻⁶"). */
+interface HumanUnit { tokens: HumanToken[]; pow10: number; denPow10: number; expPow: number }
 
 const SUPERSCRIPT: Record<string, string> = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁻': '-', '⁺': '+' };
 
@@ -451,6 +552,7 @@ const MAX_UNIT_LENGTH = 120;
 const normalizeHuman = (raw: string): string => {
     let s = String(raw ?? '').normalize('NFC').trim();
     s = s.replace(/[    ]/g, ' ');
+    s = applyWordRenames(s);
     s = s.replace(/[µμ]/g, 'µ').replace(/Ω/g, 'Ω').replace(/Å/g, 'Å').replace(/℃/g, '°C')
         .replace(/[º˚]\s*C\b/g, '°C').replace(/°\s+C\b/g, '°C').replace(/[−–]/g, '-');
     s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+/g, sup => '^' + sup.split('').map(c => SUPERSCRIPT[c]).join(''));
@@ -513,6 +615,9 @@ const isFormula = (word: string): boolean => {
  * metre). Each comes with the reason that is shown.
  */
 const NOT_SI: Array<[RegExp, string]> = [
+    [/^K(?:g|m|Hz|J|W|Pa|V|N|L|l|cal|Bq|mol)$/, 'probably written with a capital K for the prefix kilo (the prefix is k; K is the kelvin), so it is not converted; write it with a small k'],
+    [/^(?:cal|kcal|Cal|kCal|BTU|Btu)$/, 'a calorie or British thermal unit; it has several definitions (thermochemical, international table …), so it is not converted'],
+    [/^(?:oz|gal|gpm|fl\.?oz)$/, 'a unit outside the SI with several definitions (avoirdupois, troy or fluid ounce; US or imperial gallon), so it is not converted'],
     [/^p(?:K[ab]?|OH|E)$/, 'a p-function (negative decimal logarithm), not a unit'],
     [/^H(?:V|K|B|BW|BS|R[A-Z0-9]*|L|LD|S|M|IT)(?:\d+(?:[.,]\d+)?)?$/, 'a hardness scale, not a unit; the D-SI guide shows such values in si:hybrid (Figure 7.2, p. 35)'],
     [/^Shore$|^IRHD$/, 'a hardness scale, not a unit; the D-SI guide shows such values in si:hybrid (Figure 7.2, p. 35)'],
@@ -556,12 +661,25 @@ const symbolToken = (item: string): HumanToken | null => {
         const rest = SYMBOLS[sym.slice(p.sym.length)];
         if (rest && rest.prefixable) return { sym, def: rest, pow: p.pow, exp };
     }
+    // A unit name or a usual abbreviation: read as its symbol ("Ohm" → Ω, "sec" → s, "mcg" → µg)
+    const alt = wordSymbol(sym);
+    if (alt && alt !== sym) {
+        const t = symbolToken(alt);
+        if (t) return { ...t, sym, exp: t.exp * exp, spelled: alt };
+    }
     return null;
 };
 
+/** Units that are written together with another unit as a product in practice: N·m, kW·h, mA·h, Pa·s, V·A, Ω·cm. */
+const PRODUCT_FIRST = new Set(['newton', 'watt', 'ampere', 'volt', 'pascal', 'joule', 'ohm', 'coulomb', 'siemens', 'weber', 'tesla', 'henry', 'electronvolt']);
+const PRODUCT_SECOND = new Set(['metre', 'second', 'hour', 'ampere']);
+
 /**
  * "mgkg-1", "Nm", "kWh": two symbols written without a space between them. Only when exactly one
- * reading is plausible; element symbols, formulas and known non-SI words are never split.
+ * reading is plausible; element symbols, formulas and known non-SI words are never split. A split is
+ * plausible when the second symbol carries an exponent ("mgkg-1", "kgm-3"), or when it is a product
+ * written that way in practice (N·m, W·h, A·h, Pa·s, V·A, Ω·cm). Anything else is not read: "mcg",
+ * "gm", "Kg", "kgs", "mols", "lt" or "amu" are never taken for m·cg, g·m, K·g, kg·s, mol·s, L·t or am·u.
  */
 const splitJoined = (item: string): HumanToken[] | null => {
     if (item.length > 24) return null;
@@ -575,11 +693,13 @@ const splitJoined = (item: string): HumanToken[] | null => {
     // A prefix symbol written onto a unit symbol is a prefixed unit (SI brochure 5.4.3): "mh" is the
     // milli-hour (not allowed), not metre hour; "kd" is not kilogram day … so it is never split.
     if (PREFIX_SYMBOLS.some(p => letters.startsWith(p.sym) && letters.length > p.sym.length && SYMBOLS[letters.slice(p.sym.length)])) return null;
+    const plausible = (a: HumanToken, b: HumanToken) => !a.spelled && !b.spelled
+        && (!!expPart || (PRODUCT_FIRST.has(a.def.dsi ?? '') && PRODUCT_SECOND.has(b.def.dsi ?? '')));
     const readings: HumanToken[][] = [];
     for (let cut = 1; cut < letters.length; cut++) {
         const a = symbolToken(letters.slice(0, cut));
         const b = a && symbolToken(letters.slice(cut) + expPart);
-        if (a && b) readings.push([a, b]);
+        if (a && b && plausible(a, b)) readings.push([a, b]);
     }
     if (readings.length <= 1) return readings[0] ?? null;
     // Several readings ("Pas": Pa s or P as): the one without CGS units and extreme prefixes, if unique
@@ -589,30 +709,43 @@ const splitJoined = (item: string): HumanToken[] | null => {
     return top.length === 1 ? top[0] : null;
 };
 
-const parseGroup = (group: string, sign: 1 | -1, out: HumanToken[]): number | null => {
-    let pow10 = 0;
+/** A power of ten written as such: "10^3", "10^-6", and "10-6" (a superscript lost in copying). */
+const POWER_OF_TEN = /^10(?:\^([+-]?\d+)|-(\d{1,2}))$/;
+
+const parseGroup = (group: string, sign: 1 | -1, out: HumanToken[]): { pow10: number; expPow: number } | null => {
+    let pow10 = 0, expPow = 0;
     // "100g" → "100" "g"
-    const items = group.split(' ').filter(Boolean).flatMap(it => { const n = it.match(/^(10*)(\D.*)$/); return n ? [n[1], n[2]] : [it]; });
+    const items = group.split(' ').filter(Boolean).flatMap(it => { const n = it.match(/^(10*)([^\d^-].*)$/); return n ? [n[1], n[2]] : [it]; });
     for (const item of items) {
-        const p = item.match(/^(?:(10*)|10\^([+-]?\d+))$/);
-        if (p) { pow10 += sign * (p[1] !== undefined ? p[1].length - 1 : Number(p[2])); continue; }
+        const e = item.match(POWER_OF_TEN);
+        if (e) { expPow += sign * Number(e[1] ?? `-${e[2]}`); continue; }
+        // "per 100 g": a plain number is part of the unit (it becomes a prefix: hg)
+        if (/^10*$/.test(item)) { pow10 += sign * (item.length - 1); continue; }
         if (notSiReason(item)) return null;
-        const t = symbolToken(item);
-        const ts = t ? [t] : splitJoined(item);
+        let ts: HumanToken[] | null = null;
+        // "Ohm-cm", "N-m", "kW-h": a hyphen between two unit symbols, as some certificates write a product
+        if (/^[^\d\s^+-][^\s-]*-[^\d\s^+-][^\s-]*$/.test(item) && !isFormula(item)) {
+            const parts = item.split('-').map(part => symbolToken(part));
+            if (parts.every(Boolean)) ts = parts as HumanToken[];
+        }
+        if (!ts) {
+            const t = symbolToken(item);
+            ts = t ? [t] : splitJoined(item);
+        }
         if (!ts) return null;
         for (const x of ts) out.push({ ...x, exp: x.exp * sign });
     }
-    return pow10;
+    return { pow10, expPow };
 };
 
 /** Symbols, operators and powers of ten only (annotations already taken off). */
 const parseCore = (input: string): HumanUnit | null => {
     let s = String(input ?? '').replace(/\s+/g, ' ').trim();
     if (!s || s.length > MAX_UNIT_LENGTH) return null;
-    let pow10 = 0;
-    // A power of ten in front: "x 10^3 g/mol", "×10^-3", "10^6 Bq"
-    const mult = s.match(/^(?:[x×]\s*)?10\s*\^\s*([+-]?\d+)\s*/i);
-    if (mult) { pow10 += Number(mult[1]); s = s.slice(mult[0].length).trim(); }
+    let expPow = 0;
+    // A power of ten in front: "x 10^3 g/mol", "×10^-3", "10^6 Bq", "10-6/K"
+    const mult = s.match(/^(?:[x×]\s*)?10\s*(?:\^\s*([+-]?\d+)|-(\d{1,2})(?![\d.,]))\s*/i);
+    if (mult) { expPow += Number(mult[1] ?? `-${mult[2]}`); s = s.slice(mult[0].length).trim(); }
     if (!s) return null;
     // Split at "/" outside parentheses; everything after a "/" is in the denominator
     const groups: string[] = [];
@@ -624,22 +757,25 @@ const parseCore = (input: string): HumanUnit | null => {
         cur += ch;
     }
     groups.push(cur);
-    if (groups.some(g => !g.trim())) return null;
+    // "/K" (per kelvin): nothing before the first "/"; any other empty part makes the text unreadable
+    if (groups.slice(1).some(g => !g.trim()) || (groups.length === 1 && !groups[0].trim())) return null;
     const tokens: HumanToken[] = [];
-    let denPow10 = 0;
+    let pow10 = 0, denPow10 = 0;
     for (let i = 0; i < groups.length; i++) {
+        if (i === 0 && !groups[0].trim()) continue;
         const p = parseGroup(groups[i].replace(/\s+/g, ' ').trim(), i === 0 ? 1 : -1, tokens);
         if (p === null) return null;
-        pow10 += p;
-        if (i > 0) denPow10 += p;
+        pow10 += p.pow10;
+        expPow += p.expPow;
+        if (i > 0) denPow10 += p.pow10;
     }
     if (tokens.length === 0) return null;
-    return { tokens, pow10, denPow10 };
+    return { tokens, pow10, denPow10, expPow };
 };
 
 // ── What a unit text says besides its unit: kind of fraction, basis, analyte ──
 
-export type UnitNoteType = 'kind' | 'basis' | 'analyte' | 'as' | 'comment' | 'quantity';
+export type UnitNoteType = 'kind' | 'basis' | 'analyte' | 'as' | 'comment' | 'quantity' | 'reference';
 export interface UnitNote { text: string; type: UnitNoteType }
 
 export interface UnitAnalysis {
@@ -718,6 +854,9 @@ export const analyzeUnit = (raw: string): UnitAnalysis => {
     });
     // The quantity named after a ratio: "% RH", "%IACS", "% LEL" (relative humidity, conductivity, lower explosive limit)
     s = s.replace(/(%|‰|ppm)\s*(RH|rH|r\.h\.|rel\.?\s*h\.?|IACS|LEL|LFL|UEL|sat\.?)(?![A-Za-z])/g, (_all, r, q) => { notes.push({ text: q, type: 'quantity' }); return `${r} `; });
+    // The reference of an isotope delta value after ‰: "‰ vs VPDB", "‰ (V-SMOW)", "‰ relative to AIR"
+    s = s.replace(new RegExp(`(‰)\\s*(?:vs\\.?|versus|relative\\s+to|rel\\.?\\s*to|against|w\\.r\\.t\\.?)?\\s*[([]?\\s*(${DELTA_REF})\\s*[)\\]]?(?![A-Za-z0-9])`, 'g'),
+        (_all, r, ref) => { notes.push({ text: String(ref).trim(), type: 'reference' }); return `${r} `; });
     // "as N", "as CaCO3", "as received" after the unit, also in brackets: "(as N)"
     s = s.replace(/[([]\s*as\s+([^()[\]]+?)\s*[)\]]/gi, (_all, what) => { notes.push({ text: `as ${String(what).trim()}`, type: 'as' }); return ' '; });
     const as = s.match(/^(.*?\S)\s+as\s+(\S.*)$/i);
@@ -838,7 +977,7 @@ const readCore = (core: string): { h: HumanUnit; readAs: string; capitals: boole
 };
 
 const humanSize = (h: HumanUnit): { factor: number | null; dim: Dim; numDim: Dim; denDim: Dim } => {
-    let factor: number | null = Math.pow(10, h.pow10);
+    let factor: number | null = Math.pow(10, h.pow10 + h.expPow);
     let dim = ZERO, numDim = ZERO, denDim = ZERO;
     for (const t of h.tokens) {
         const scale = Math.pow(10, t.pow) * (t.binary ? Math.pow(2, BINARY_BY_ID.get(t.binary)!.pow) : 1);
@@ -872,7 +1011,7 @@ const sameFactor = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(
 // ─────────────────────────────── Writing a unit in D-SI ───────────────────────────────
 
 export interface DsiResult {
-    /** The D-SI unit, or "" when the unit cannot be written in D-SI without changing the value. */
+    /** The D-SI unit, or "" when the unit cannot be written in D-SI. */
     dsi: string;
     cls: DsiClass;
     /** One or two sentences: how the unit was written and why, with the rules and pages (shown in the notice). */
@@ -887,6 +1026,37 @@ export interface DsiResult {
     noAi?: boolean;
     /** The guide page that matters most for this result (for the link in the notice). */
     page?: number;
+    /** A power of ten written into the value and its uncertainty: 196.4 "× 10³ g/mol" → 196.4e3 \gram\mole\tothe{-1}. */
+    valueExp?: number;
+    /** Written in si:hybrid: first the value in the SI unit `dsi`, then the value as printed. */
+    hybrid?: HybridWriting;
+    /** si:label of the value (an isotope delta value: "δ13CVPDB"). */
+    label?: string;
+    /** si:quantityTypeQUDT, for a unit that does not say which quantity it measures (%, ppm). */
+    qudt?: string;
+    /** ppb or ‰ without the kind of fraction: written in si:hybrid with \ppm or \one, with a warning. */
+    kindUnknown?: boolean;
+}
+
+/** A unit outside the SI with a defined conversion into an SI unit (written in si:hybrid). */
+export interface HybridDef {
+    /** The D-SI unit of the first element of si:hybrid. */
+    si: string;
+    name: string;
+    /** SI value = value × num / den + offNum / offDen (exact integers as text) … */
+    num?: string; den?: string; offNum?: string; offDen?: string;
+    /** … or exactly value × 10^pow (the power of ten goes into the number). */
+    pow?: number;
+    /** How the unit is defined, with the source (shown in the notice). */
+    definition: string;
+    /** Only in this context: "rad" is the old unit of absorbed dose only when the text is about a dose. */
+    needs?: RegExp;
+}
+export interface HybridWriting {
+    /** The unit as printed, written in the second element of si:hybrid. */
+    asWritten: string;
+    /** The conversion; absent for ppb and ‰, whose SI value is the value with `valueExp` (10⁻³). */
+    def?: HybridDef;
 }
 
 const KIND_UNITS: Record<RatioKind, { label: string }> = {
@@ -894,8 +1064,13 @@ const KIND_UNITS: Record<RatioKind, { label: string }> = {
     volume: { label: 'volume fraction' }, massConcentration: { label: 'mass concentration (w/v: gram per millilitre basis)' },
 };
 
-/** A ratio without a D-SI identifier (ppb, ‰), or any ratio given as w/v, written as a unit of the stated kind, same size. */
-const ratioAsFraction = (ratio: number, kind: RatioKind): DsiToken[] | null => {
+/**
+ * A ratio without a D-SI identifier (ppb, ‰), or any ratio given as w/v, written as a unit of the stated
+ * kind. The same size, except "% (w/v)": 1 % (w/v) = 1 g per 100 mL = 10 g/L. The percent sign is not a
+ * unit of a mass concentration (it is a ratio of dimension one), so it is written in g/L with the
+ * number times 10 (valueExp 1: an exponent of the number, the digits stay as printed).
+ */
+const ratioAsFraction = (ratio: number, kind: RatioKind): { tokens: DsiToken[]; valueExp: number } | null => {
     const unitWithPrefix = (unit: string, p: number): DsiToken | null => {
         if (p === 0) return { unit, exp: 1 };
         const prefix = PREFIX_BY_POW.get(p);
@@ -903,24 +1078,155 @@ const ratioAsFraction = (ratio: number, kind: RatioKind): DsiToken[] | null => {
     };
     const p = Math.round(Math.log10(ratio));
     if (!sameFactor(Math.pow(10, p), ratio)) return null;
+    const same = (tokens: DsiToken[] | null) => (tokens ? { tokens, valueExp: 0 } : null);
     if (kind === 'mass') {
         // ratio = g per kg × 10^(p+3)
         const q = p + 3;
-        if (q === 3) return [{ unit: 'kilogram', exp: 1 }, { unit: 'kilogram', exp: -1 }];
+        if (q === 3) return same([{ unit: 'kilogram', exp: 1 }, { unit: 'kilogram', exp: -1 }]);
         const num = unitWithPrefix('gram', q);
-        return num ? [num, { unit: 'kilogram', exp: -1 }] : null;
+        return same(num ? [num, { unit: 'kilogram', exp: -1 }] : null);
     }
     if (kind === 'amount' || kind === 'volume') {
         const unit = kind === 'amount' ? 'mole' : 'litre';
         const num = unitWithPrefix(unit, p);
-        return num ? [num, { unit, exp: -1 }] : null;
+        return same(num ? [num, { unit, exp: -1 }] : null);
     }
-    // w/v: the ratio is taken on a gram per millilitre basis (1 % (w/v) = 1 g per 100 mL, Ph. Eur. 1.2)
+    // w/v: the ratio is taken on a gram per millilitre basis (Ph. Eur. General Notices 1.2)
     const q = p + 3; // g/mL × ratio = g/L × 10^(p+3)
-    if (q === 1) return [{ unit: 'gram', exp: 1 }, { unit: 'litre', exp: -1, prefix: 'deci' }];
-    const num = unitWithPrefix('gram', q);
-    return num ? [num, { unit: 'litre', exp: -1 }] : null;
+    const num = q <= 0 ? unitWithPrefix('gram', q) : null;
+    if (num) return same([num, { unit: 'litre', exp: -1 }]);
+    return { tokens: [{ unit: 'gram', exp: 1 }, { unit: 'litre', exp: -1 }], valueExp: q };
 };
+
+/** The SI size and the two sides of each kind of fraction, to check a D-SI unit chosen for one. */
+const KIND_SIZE: Record<RatioKind, { num: Dim; den: Dim; per: number }> = {
+    mass: { num: dimOf(0, 1), den: dimOf(0, 1), per: 1 }, amount: { num: dimOf(0, 0, 0, 0, 0, 1), den: dimOf(0, 0, 0, 0, 0, 1), per: 1 },
+    volume: { num: dimOf(3), den: dimOf(3), per: 1 }, massConcentration: { num: dimOf(0, 1), den: dimOf(3), per: 1e3 },
+};
+/** A D-SI unit for a ratio of a stated kind: the preferred one (with its valueExp), or any unit of that kind and size. */
+const ratioMatches = (ratio: number, kind: RatioKind, c: DsiCheck): number | null => {
+    const preferred = ratioAsFraction(ratio, kind);
+    if (preferred && formatDsi(preferred.tokens) === formatDsi(c.tokens)) return preferred.valueExp;
+    const k = KIND_SIZE[kind];
+    const sides = dsiSides(c.tokens);
+    const ok = c.factor !== null && sameFactor(c.factor, ratio * k.per) && sameDim(sides.numDim, k.num) && sameDim(sides.denDim, k.den)
+        && c.tokens.every(t => !UNIT_BY_ID.get(t.unit)!.named);
+    return ok ? 0 : null;
+};
+
+// ── Units outside the SI with a defined conversion: written in si:hybrid (D-SI guide Section 7) ──
+
+const NIST811 = 'NIST SP 811, Appendix B';
+// Units whose symbol has another reading outside a matching text: "G" alone (in capitals also a gram),
+// "Gal" (also a gallon at the start of a sentence)
+const MAGNETIC_TEXT = /\bmagnet\w*|\bmoment\b|\bsusceptib\w*|\bhysteres\w*|\bcoercivit\w*|\bflux\b|\binduction\b/i;
+const ACCELERATION_TEXT = /\baccelerat\w*|\bgravit\w*|\bgeophys\w*/i;
+const HYBRID_LIST: Array<[string[], HybridDef]> = [
+    [['lb', 'lbs', 'lbm', 'LB', 'LBS', 'pound', 'pounds'], { si: '\\kilogram', name: 'pound', num: '45359237', den: '100000000', definition: `1 lb = 0.453 592 37 kg exactly, ${NIST811}` }],
+    [['ft', 'foot', 'feet'], { si: '\\metre', name: 'foot', num: '3048', den: '10000', definition: `1 ft = 0.3048 m exactly, ${NIST811}` }],
+    [['in', 'inch', 'inches'], { si: '\\milli\\metre', name: 'inch', num: '254', den: '10', definition: `1 in = 25.4 mm exactly, ${NIST811}` }],
+    [['yd', 'yard', 'yards'], { si: '\\metre', name: 'yard', num: '9144', den: '10000', definition: `1 yd = 0.9144 m exactly, ${NIST811}` }],
+    [['mi', 'mile', 'miles'], { si: '\\kilo\\metre', name: 'international mile', num: '1609344', den: '1000000', definition: `1 mi = 1.609 344 km exactly, ${NIST811}` }],
+    [['psi', 'PSI'], { si: '\\kilo\\pascal', name: 'pound-force per square inch', num: '44482216152605', den: '6451600000000', definition: `1 psi = 1 lbf/in² = 6.894 757 kPa, from 1 lbf = 4.448 221 615 260 5 N and 1 in = 0.0254 m exactly, ${NIST811}` }],
+    [['atm', 'ATM', 'atmosphere', 'atmospheres'], { si: '\\kilo\\pascal', name: 'standard atmosphere', num: '101325', den: '1000', definition: `1 atm = 101.325 kPa exactly, ${NIST811}` }],
+    [['Torr', 'torr', 'TORR'], { si: '\\pascal', name: 'torr', num: '101325', den: '760', definition: `1 Torr = 101 325/760 Pa = 133.322 Pa, ${NIST811}` }],
+    [['mTorr'], { si: '\\pascal', name: 'millitorr', num: '101325', den: '760000', definition: `1 mTorr = 101.325/760 Pa = 0.133 322 Pa, ${NIST811}` }],
+    [['kgf', 'kp'], { si: '\\newton', name: 'kilogram-force', num: '980665', den: '100000', definition: `1 kgf = 9.806 65 N exactly, ${NIST811}` }],
+    [['gf'], { si: '\\milli\\newton', name: 'gram-force', num: '980665', den: '100000', definition: `1 gf = 9.806 65 mN exactly, ${NIST811}` }],
+    [['kgf/cm²', 'kgf/cm2', 'kp/cm²', 'kp/cm2'], { si: '\\kilo\\pascal', name: 'kilogram-force per square centimetre', num: '980665', den: '10000', definition: `1 kgf/cm² = 98.0665 kPa exactly, ${NIST811}` }],
+    [['kgf/mm²', 'kgf/mm2', 'kp/mm²', 'kp/mm2'], { si: '\\mega\\pascal', name: 'kilogram-force per square millimetre', num: '980665', den: '100000', definition: `1 kgf/mm² = 9.806 65 MPa exactly, ${NIST811}` }],
+    [['lbf'], { si: '\\newton', name: 'pound-force', num: '44482216152605', den: '10000000000000', definition: `1 lbf = 4.448 221 615 260 5 N exactly, ${NIST811}` }],
+    [['mmH2O'], { si: '\\pascal', name: 'conventional millimetre of water', num: '980665', den: '100000', definition: `1 mmH2O = 9.806 65 Pa exactly (conventional), ${NIST811}` }],
+    [['cmH2O'], { si: '\\pascal', name: 'conventional centimetre of water', num: '980665', den: '10000', definition: `1 cmH2O = 98.0665 Pa exactly (conventional), ${NIST811}` }],
+    [['°F'], { si: '\\kelvin', name: 'degree Fahrenheit', num: '5', den: '9', offNum: '45967', offDen: '180', definition: 'T/K = (5/9) × t/°F + 45967/180, D-SI guide Section 7, p. 36' }],
+    [['°R'], { si: '\\kelvin', name: 'degree Rankine', num: '5', den: '9', definition: `T/K = (5/9) × T/°R exactly, ${NIST811}` }],
+    [['Oe', 'oersted', 'oersteds'], { si: '\\ampere\\metre\\tothe{-1}', name: 'oersted (CGS unit of magnetic field strength)', num: '7957747154594766788444188168626', den: `1${'0'.repeat(29)}`, definition: '1 Oe = 1000/(4π) A/m = 79.577 47 A/m, NIST, Units for Magnetic Properties' }],
+    [['kOe'], { si: '\\kilo\\ampere\\metre\\tothe{-1}', name: 'kilo-oersted', num: '7957747154594766788444188168626', den: `1${'0'.repeat(29)}`, definition: '1 kOe = 1000/(4π) kA/m = 79.577 47 kA/m, NIST, Units for Magnetic Properties' }],
+    [['gauss'], { si: '\\tesla', name: 'gauss (CGS unit of magnetic flux density)', pow: -4, definition: `1 G = 10⁻⁴ T exactly, ${NIST811}` }],
+    [['G', 'Gs'], { si: '\\tesla', name: 'gauss (CGS unit of magnetic flux density)', pow: -4, definition: `1 G = 10⁻⁴ T exactly, ${NIST811}`, needs: MAGNETIC_TEXT }],
+    [['Mx', 'maxwell', 'maxwells'], { si: '\\weber', name: 'maxwell (CGS unit of magnetic flux)', pow: -8, definition: `1 Mx = 10⁻⁸ Wb exactly, ${NIST811}` }],
+    [['erg', 'ergs'], { si: '\\joule', name: 'erg (CGS unit of energy)', pow: -7, definition: `1 erg = 10⁻⁷ J exactly, ${NIST811}` }],
+    [['dyn', 'dyne', 'dynes'], { si: '\\newton', name: 'dyne (CGS unit of force)', pow: -5, definition: `1 dyn = 10⁻⁵ N exactly, ${NIST811}` }],
+    [['dyn/cm'], { si: '\\milli\\newton\\metre\\tothe{-1}', name: 'dyne per centimetre', pow: 0, definition: `1 dyn/cm = 1 mN/m exactly, ${NIST811}` }],
+    [['Gal'], { si: '\\metre\\second\\tothe{-2}', name: 'gal (CGS unit of acceleration)', pow: -2, definition: `1 Gal = 1 cm/s² = 10⁻² m/s² exactly, ${NIST811}`, needs: ACCELERATION_TEXT }],
+    [['mGal'], { si: '\\metre\\second\\tothe{-2}', name: 'milligal', pow: -5, definition: `1 mGal = 10⁻⁵ m/s² exactly, ${NIST811}`, needs: ACCELERATION_TEXT }],
+    [['Ci', 'curie', 'curies'], { si: '\\giga\\becquerel', name: 'curie', num: '37', den: '1', definition: `1 Ci = 3.7 × 10¹⁰ Bq = 37 GBq exactly, ${NIST811}` }],
+    [['mCi'], { si: '\\mega\\becquerel', name: 'millicurie', num: '37', den: '1', definition: `1 mCi = 37 MBq exactly, ${NIST811}` }],
+    [['µCi', 'uCi'], { si: '\\kilo\\becquerel', name: 'microcurie', num: '37', den: '1', definition: `1 µCi = 37 kBq exactly, ${NIST811}` }],
+    [['nCi'], { si: '\\becquerel', name: 'nanocurie', num: '37', den: '1', definition: `1 nCi = 37 Bq exactly, ${NIST811}` }],
+    [['pCi'], { si: '\\milli\\becquerel', name: 'picocurie', num: '37', den: '1', definition: `1 pCi = 37 mBq exactly, ${NIST811}` }],
+    [['kCi'], { si: '\\tera\\becquerel', name: 'kilocurie', num: '37', den: '1', definition: `1 kCi = 37 TBq exactly, ${NIST811}` }],
+    [['rem'], { si: '\\sievert', name: 'rem', pow: -2, definition: `1 rem = 10⁻² Sv exactly, ${NIST811}` }],
+    [['mrem'], { si: '\\milli\\sievert', name: 'millirem', pow: -2, definition: `1 mrem = 10⁻² mSv exactly, ${NIST811}` }],
+];
+const hybridKey = (core: string) => normalizeHuman(core).replace(/\s+/g, '');
+const HYBRID_UNITS = new Map<string, HybridDef>();
+for (const [keys, def] of HYBRID_LIST) for (const k of keys) HYBRID_UNITS.set(hybridKey(k), def);
+const DOSE_TEXT = /\b(dose|dosimetr\w*|absorbed|irradiat\w*|radiation|kerma|exposure)\b/i;
+// "rad" and "mrad" are the radian and the milliradian, and the old unit of absorbed dose only in a dose
+const DOSE_RAD: Record<string, HybridDef> = {
+    rad: { si: '\\gray', name: 'rad (old unit of absorbed dose)', pow: -2, definition: `1 rad = 10⁻² Gy exactly, ${NIST811}`, needs: DOSE_TEXT },
+    mrad: { si: '\\milli\\gray', name: 'millirad (old unit of absorbed dose)', pow: -2, definition: `1 mrad = 10⁻² mGy exactly, ${NIST811}`, needs: DOSE_TEXT },
+};
+
+/** The si:hybrid conversion of a unit text (its symbols only), or null. */
+const hybridOf = (core: string, contextText: string): HybridDef | null => {
+    const key = hybridKey(core);
+    const def = HYBRID_UNITS.get(key) ?? DOSE_RAD[key];
+    if (!def) return null;
+    return def.needs && !def.needs.test(contextText) ? null : def;
+};
+/** The class of si:hybrid: that of its first (SI) element, but not better than gold (rule R054, D-SI guide p. 83). */
+const hybridClass = (cls: DsiClass): DsiClass => (DSI_CLASS_RANK[cls] < DSI_CLASS_RANK.gold ? 'gold' : cls);
+
+/** The value in the SI unit of si:hybrid (the uncertainty: `uncertainty` true, the factor only), or null. */
+export const hybridValue = (value: string, def: HybridDef, uncertainty = false): string | null => {
+    if (def.pow !== undefined) return /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(String(value).trim()) ? shiftDecimal(value, def.pow) : null;
+    if (!def.num || !def.den) return null;
+    return convertDecimal(value, BigInt(def.num), BigInt(def.den), BigInt(def.offNum ?? '0'), BigInt(def.offDen ?? '1'), uncertainty);
+};
+
+const hybridSentence = (asWritten: string, def: HybridDef): string =>
+    `"${asWritten}" (${def.name}) is not a unit of the SI, and D-SI has no identifier for it. It is written in si:hybrid (D-SI guide Section 7, p. 33; Figure 7.1, p. 34): `
+    + `first the value converted to ${def.si} (${def.definition})${def.pow !== undefined ? (def.pow ? ', with the power of ten in the number, so nothing is rounded' : '') : ', rounded two digits finer than the printed value'}, `
+    + `then the value exactly as printed with "${asWritten}". The uncertainty is converted with the same factor (p. 36). A hybrid is at best class Gold (rule R054, p. 83).`;
+
+// ── Isotope delta values (δ13C in ‰ vs VPDB): numbers of dimension one ──
+
+/** Reference scales and materials of isotope delta values, as written after the unit or in the text. */
+const DELTA_REF = 'V-?PDB|PDB|V-?SMOW(?:-?SLAP)?|SMOW|SLAP|V-?CDT|CDT|AIR|Air|air|IAEA-[A-Z0-9-]+|NIST\\s*SRM\\s*\\d+[a-z]?|SRM\\s*\\d+[a-z]?|IRMM-\\d+[a-z]?|ERM-[A-Z]{2}\\d+[a-z]?';
+const DELTA_REF_RE = new RegExp(`(?<![A-Za-z0-9-])(${DELTA_REF})(?![A-Za-z0-9])`);
+const DELTA_NAME = /(?:δ|\b[Dd]elta\b)\s*\(?\s*\^?\s*(\d{1,3})\s*([A-Z][a-z]?)(?![a-z])/;
+const SUPER_DIGITS: Record<string, string> = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+
+/**
+ * si:label of an isotope delta value in ‰, as proposed for the D-SI ("δ13CVPDB": the delta, the
+ * isotope and the reference): from the quantity's description and the reference after the unit
+ * ("‰ vs VPDB"). Null when the text names no delta value.
+ */
+const deltaLabel = (unitText: string, texts: string[], notes: UnitNote[]): string | null => {
+    const plain = (t: string) => String(t ?? '').normalize('NFC').replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, c => SUPER_DIGITS[c]);
+    let name: RegExpMatchArray | null = null;
+    for (const t of [...texts, unitText].map(plain)) {
+        const m = t.match(DELTA_NAME);
+        if (m && ELEMENT_SET.has(m[2])) { name = m; break; }
+    }
+    if (!name) return null;
+    const refText = notes.find(n => n.type === 'reference')?.text ?? [...texts, unitText].map(plain).map(t => t.match(DELTA_REF_RE)?.[1]).find(Boolean) ?? '';
+    const ref = /^(?:V-?PDB|PDB|V-?SMOW|SMOW|SLAP|V-?CDT|CDT|AIR|Air|air)/.test(refText) ? refText.replace(/-/g, '').replace(/^(?:Air|air)$/, 'AIR') : refText ? ` vs ${refText}` : '';
+    return `δ${name[1]}${name[2]}${ref}`;
+};
+
+// ── The kind of quantity in QUDT, for units that do not say it themselves ──
+
+const QUDT_KIND: Partial<Record<RatioKind, string>> = { mass: 'MassFraction', amount: 'AmountOfSubstanceFraction', volume: 'VolumeFraction' };
+/**
+ * si:quantityTypeQUDT for a unit that does not say which quantity it measures: %, ppm, ‰ or ppb
+ * written with \percent, \ppm or \one, when the certificate states the kind of fraction. Other units
+ * (mg/kg, mol/mol, g/L …) already say it, so nothing is written for them.
+ */
+const qudtFor = (core: string, dsi: string, kind?: RatioKind): string | undefined =>
+    kind && /^(?:%|ppm|‰|ppb)$/.test(core) && ['\\percent', '\\ppm', '\\one'].includes(dsi) ? QUDT_KIND[kind] : undefined;
 
 /**
  * Moves the powers of ten of one side of the unit (prefixes and a written factor such as 10³) onto a
@@ -996,7 +1302,7 @@ const CHARGE_WORDS = /\b(charge|coulomb|capacity|electric)\b/i;
 const DOSE_WORDS = /\b(dose|dosimetr\w*|absorbed|irradiat\w*|radiation|kerma|exposure)\b/i;
 
 const notesSentence = (notes: UnitNote[]): string => {
-    const other = notes.filter(n => n.type !== 'kind').map(n => `"${n.text}"`);
+    const other = notes.filter(n => n.type !== 'kind' && n.type !== 'reference').map(n => `"${n.text}"`);
     const kind = notes.filter(n => n.type === 'kind').map(n => `"${n.text}"`);
     const parts: string[] = [];
     if (other.length) parts.push(`${other.join(', ')} ${other.length > 1 ? 'are' : 'is'} not part of the unit (a D-SI unit is built only from unit, prefix and exponent identifiers, D-SI guide Section 3, pp. 12–17); it is left out of the D-SI unit, so keep it in the quantity name.`);
@@ -1004,10 +1310,32 @@ const notesSentence = (notes: UnitNote[]): string => {
     return parts.length ? ` ${parts.join(' ')}` : '';
 };
 
+const MAGNETIC_WORDS = MAGNETIC_TEXT;
+
+/** The unit as printed for the second element of si:hybrid: the text itself, or its symbols when notes were taken off. */
+const printedUnit = (raw: string, a: UnitAnalysis): string => {
+    const text = String(raw ?? '').trim();
+    return !a.notes.length && hybridKey(text) === hybridKey(a.core) && !/^[[(]|\s/.test(text) ? text : a.core;
+};
+
+/** "Ohm" is read as Ω and "sec" as s: the words of a unit text that were read as SI symbols. */
+const renamedSentence = (raw: string, h: HumanUnit | null): string => {
+    const pairs = [...wordRenamesIn(raw), ...(h ? h.tokens.filter(t => t.spelled).map(t => [t.sym, t.spelled!] as [string, string]) : [])];
+    const seen = new Set<string>();
+    const shown = (to: string) => to === 'min^-1' ? 'min⁻¹ (revolutions per minute; a revolution is a count)' : to.replace(/\^2$/, '²').replace(/\^3$/, '³');
+    const list = pairs.filter(([from, to]) => from !== to && !seen.has(from) && seen.add(from)).map(([from, to]) => `"${from}" as ${shown(to)}`);
+    return list.length ? ` Unit names and usual abbreviations are read as SI symbols: ${list.join(', ')}.` : '';
+};
+/** How a power of ten moved into the number is written. */
+const valueExpSentence = (n: number, why: string): string =>
+    ` ${why} The number is written with the exponent e${n} (a value such as 12.3 is written 12.3e${n}): the D-SI number format allows an exponent (rule R003, D-SI guide p. 70), and the digits stay as printed.`;
+
 /**
- * Writes a unit from the certificate as a D-SI unit of exactly the same size. Deterministic: the same
- * input gives the same output. Returns dsi "" when that is not possible without changing the value, or
- * when the unit text can be read in more than one way.
+ * Writes a unit from the certificate in D-SI. Deterministic: the same input gives the same output.
+ * A D-SI unit of exactly the same size where one exists; a power of ten written with the unit goes into
+ * the number; units outside the SI with a defined conversion, and ppb or ‰ without the kind of fraction,
+ * are written in si:hybrid. Returns dsi "" when none of that applies, or when the unit text can be read
+ * in more than one way.
  */
 export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
     const raw = String(unitText ?? '').trim();
@@ -1021,7 +1349,8 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
             : { dsi: '', cls: 'improvable', noAi: true, explanation: `"${raw}" is not a valid D-SI unit: ${issuesText(c.errors)}`, page: c.errors[0]?.page };
     }
     const a = analyzeUnit(raw);
-    const texts = (ctx?.texts || []).join(' ');
+    const ctxTexts = (ctx?.texts || []).map(t => String(t ?? ''));
+    const texts = ctxTexts.join(' ');
     if (a.dimensionOne) {
         const isPh = a.notes.some(n => n.type === 'quantity');
         return {
@@ -1029,6 +1358,16 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
             explanation: isPh
                 ? `pH is a quantity of dimension one (a logarithm), not a unit; D-SI writes quantities of dimension one with \\one (Table A.2, D-SI guide p. 48). Keep "pH" in the quantity name. Class Platinum (R017, p. 74).`
                 : `A quantity of dimension one is written with \\one (Table A.2, D-SI guide p. 48). Class Platinum (R017, p. 74).`,
+        };
+    }
+    // A unit outside the SI with a defined conversion (lb, °F, psi, Oe …): si:hybrid
+    const hy = hybridOf(a.core, texts);
+    if (hy) {
+        const c = checkDsi(hy.si);
+        const asWritten = printedUnit(raw, a);
+        return {
+            dsi: hy.si, cls: hybridClass(c.cls), notes: a.notes, page: GUIDE_PAGE['Figure 7.1'], hybrid: { asWritten, def: hy },
+            explanation: hybridSentence(asWritten, hy) + renamedSentence(raw, null) + notesSentence(a.notes),
         };
     }
     if (a.notUnit) return { dsi: '', cls: 'improvable', noAi: true, notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `${a.notUnit} It is written as typed (class Improvable, D-SI guide Section 8, p. 41).` };
@@ -1053,35 +1392,62 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
         } else decided = ' "C" was read as the coulomb, because the description of the quantity is about electric charge.';
         ambiguous = true;
     }
-    // "°" alone in a temperature: degree (angle) or degree Celsius?
-    if (bare === '°' && TEMPERATURE_ONLY_WORDS.test(texts)) {
-        return { dsi: '', cls: 'improvable', ambiguous: true, notes: a.notes, page: GUIDE_PAGE['Table A.2'], explanation: '"°" is the degree of plane angle (Table A.2, p. 48), but the description of the quantity is about a temperature; it is not converted.' };
+    // "°" (or "deg", "degrees") alone in a temperature: degree (angle) or degree Celsius?
+    if (/^(?:°|deg|degs|degrees?)$/i.test(bare) && TEMPERATURE_ONLY_WORDS.test(texts)) {
+        return { dsi: '', cls: 'improvable', ambiguous: true, notes: a.notes, page: GUIDE_PAGE['Table A.2'], explanation: `"${bare}" is the degree of plane angle (Table A.2, p. 48), but the description of the quantity is about a temperature; it is not converted.` };
     }
     if (!parsed) return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `"${raw}" could not be read as a unit of the SI, so no D-SI unit of the same size is known for it (class Improvable, D-SI guide Section 8, p. 41).` };
-    // "rad": radian, or the old unit of absorbed dose (1 rad = 0.01 Gy)?
-    if (parsed.tokens.some(t => t.def.dsi === 'radian') && DOSE_WORDS.test(texts)) {
+    // "rad": radian, or the old unit of absorbed dose (1 rad = 0.01 Gy)? (In a dose it is written in si:hybrid, above.)
+    if (parsed.tokens.some(t => t.def.dsi === 'radian' && !t.spelled) && DOSE_WORDS.test(texts)) {
         return { dsi: '', cls: 'improvable', ambiguous: true, notes: a.notes, page: GUIDE_PAGE['Table A.3'], explanation: '"rad" is the radian (Table A.3, p. 49), but the description of the quantity is about a dose, where "rad" is the old unit of absorbed dose (0.01 Gy); it is not converted.' };
+    }
+    // "emu": its size depends on the quantity; only the emu of magnetic moment is read, in a magnetic quantity
+    const emu = parsed.tokens.find(t => t.def.needs === 'magnetic');
+    if (emu && !MAGNETIC_WORDS.test(texts)) {
+        return { dsi: '', cls: 'improvable', noAi: true, notes: a.notes, page: GUIDE_PAGE.Improvable,
+            explanation: `"${emu.sym}" is the CGS electromagnetic unit, whose size depends on the quantity (NIST SP 811, Appendix B, lists an emu of current, of voltage, of resistance …). The description of the quantity does not say that it is magnetic (a magnetic moment: 1 emu = 10⁻³ A·m²; a magnetization: 1 emu/cm³ = 10³ A/m), so it is not converted. Name the quantity (for example "Magnetic moment") and it is converted.` };
     }
 
     // A ratio without a D-SI identifier (ppb, ‰), or any ratio taken as w/v, needs the kind of fraction
     const ratioToken = parsed.tokens.find(t => t.def.ratio !== undefined && (!t.def.dsi || a.kind === 'massConcentration'));
     if (ratioToken) {
-        if (parsed.tokens.length !== 1 || ratioToken.exp !== 1 || ratioToken.pow !== 0 || parsed.pow10 !== 0) {
+        if (parsed.tokens.length !== 1 || ratioToken.exp !== 1 || ratioToken.pow !== 0 || parsed.pow10 !== 0 || parsed.expPow !== 0) {
             return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `"${raw}" combines ${ratioToken.def.noDsi ?? ratioToken.sym} with other units; no D-SI unit of the same size is known for it.` };
+        }
+        // An isotope delta value (δ13C in ‰ vs VPDB): a number of dimension one, 1 ‰ = 10⁻³
+        const delta = ratioToken.sym === '‰' && !a.kind ? deltaLabel(raw, ctxTexts, a.notes) : null;
+        if (delta) {
+            const ref = a.notes.some(n => n.type === 'reference') || /vs|V?PDB|SMOW|AIR/.test(delta);
+            return {
+                dsi: '\\one', cls: 'gold', valueExp: -3, hybrid: { asWritten: '‰' }, label: delta, notes: a.notes, page: GUIDE_PAGE['Figure 7.1'],
+                explanation: `An isotope delta value in ‰ is a number of dimension one (1 ‰ = 10⁻³). It is written in si:hybrid (D-SI guide Section 7, p. 33): first the number with the exponent e-3 and the unit \\one, then the value exactly as printed with "‰". `
+                    + `si:label says which delta value it is: "${delta}"${ref ? '' : ' (the reference scale, such as VPDB, is not stated in the unit or the description; add it to the quantity name)'}. A hybrid is at best class Gold (rule R054, p. 83).`,
+            };
         }
         const kind = a.kind ?? kindFromContext(raw, ctx);
         if (!kind) {
-            return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `D-SI has no identifier for ${ratioToken.def.noDsi}. It can be written as a mass, amount or volume fraction of the same size, but the certificate text does not say which kind of fraction it is.` };
+            // Kind not stated: in si:hybrid, ppb as 10⁻³ ppm and ‰ as 10⁻³ (dimension one), with a warning
+            const ppb = ratioToken.sym === 'ppb';
+            const si = ppb ? '\\ppm' : '\\one';
+            return {
+                dsi: si, cls: 'gold', valueExp: -3, hybrid: { asWritten: ratioToken.sym }, kindUnknown: true, ambiguous: true, notes: a.notes, page: GUIDE_PAGE['Figure 7.1'],
+                explanation: `D-SI has no identifier for ${ratioToken.def.noDsi}, and the certificate text does not say whether it is a mass, an amount-of-substance or a volume fraction: the kind of quantity is ambiguous. `
+                    + `It is written in si:hybrid (D-SI guide Section 7, p. 33): first the number with the exponent e-3 and the unit ${si} (${ppb ? '1 ppb = 10⁻³ ppm; \\ppm is an identifier of the D-SI 2.2.1 unit list' : '1 ‰ = 10⁻³, a number of dimension one'}), then the value exactly as printed with "${ratioToken.sym}". `
+                    + `State the kind of fraction in the quantity name or the table (for example "Mass fraction of Pb"), and it is written as a unit of that kind instead. A hybrid is at best class Gold (rule R054, p. 83).`,
+            };
         }
-        const tokens = ratioAsFraction(ratioToken.def.ratio!, kind);
-        if (!tokens) return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `No D-SI ${KIND_UNITS[kind].label} of the same size as "${ratioToken.sym}" exists.` };
-        const c = checkDsi(formatDsi(tokens));
+        const r = ratioAsFraction(ratioToken.def.ratio!, kind);
+        if (!r) return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `No D-SI ${KIND_UNITS[kind].label} of the same size as "${ratioToken.sym}" exists.` };
+        const c = checkDsi(formatDsi(r.tokens));
+        const dsi = formatDsi(c.tokens);
         const how = kind === 'massConcentration'
-            ? `"${raw}" is a mass concentration: w/v means grams of substance per millilitre of solution (1 % (w/v) = 1 g per 100 mL, Ph. Eur. General Notices 1.2), so it is not the ratio ${ratioToken.def.dsi ? `\\${ratioToken.def.dsi}` : ratioToken.sym}. It is written`
-            : `D-SI has no identifier for ${ratioToken.def.noDsi}; as a ${KIND_UNITS[kind].label} it is written`;
+            ? r.valueExp
+                ? `"${raw}" is a mass concentration: w/v means grams of substance per 100 millilitres of solution (1 % (w/v) = 1 g per 100 mL = 10 g/L, Ph. Eur. General Notices 1.2). The percent sign is not a unit of a mass concentration (a percentage is a ratio of dimension one), so it is written in ${dsi} with the number times 10.`
+                : `"${raw}" is a mass concentration: w/v means grams of substance per millilitre of solution (Ph. Eur. General Notices 1.2), so it is not the ratio ${ratioToken.def.dsi ? `\\${ratioToken.def.dsi}` : ratioToken.sym}. It is written ${dsi}, which has the same size, so the value is unchanged.`
+            : `D-SI has no identifier for ${ratioToken.def.noDsi}; as a ${KIND_UNITS[kind].label} it is written ${dsi}, which has the same size, so the value is unchanged.`;
         return {
-            dsi: formatDsi(c.tokens), cls: c.cls, kind, notes: a.notes, page: DSI_CLASS_PAGE[c.cls],
-            explanation: `${how} ${formatDsi(c.tokens)}, which has the same size, so the value is unchanged. ${explainDsi(c)}${notesSentence(a.notes.filter(n => n.type !== 'kind'))}`,
+            dsi, cls: c.cls, kind, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(r.valueExp ? { valueExp: r.valueExp } : {}),
+            explanation: `${how}${r.valueExp ? valueExpSentence(r.valueExp, '').replace(/^ {2}/, ' ') : ''} ${explainDsi(c)}${notesSentence(a.notes.filter(n => n.type !== 'kind'))}`,
         };
     }
 
@@ -1100,7 +1466,9 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
             // cP → mPa s: the unit's own power of ten and its prefix go onto the prefixes of the expression
             t.def.equiv.forEach(e => flat.push({ unit: e.unit, exp: e.exp * t.exp, pow: e.pow }));
             extraPow += t.pow * t.exp;
-            equivNotes.push(`"${t.sym}" (${t.def.noDsi}) has no D-SI identifier but is exactly a D-SI expression of the same size`);
+            equivNotes.push(t.def.needs === 'magnetic'
+                ? `"${t.sym}" is read as the CGS electromagnetic unit of magnetic moment, because the description of the quantity is about magnetism: 1 emu = 10⁻³ A·m² exactly (NIST, Units for Magnetic Properties), a D-SI expression of the same size`
+                : `"${t.sym}" (${t.def.noDsi}) has no D-SI identifier but is exactly a D-SI expression of the same size`);
         } else {
             flat.push({ unit: t.def.dsi!, exp: t.exp, pow: t.pow, ...(t.binary ? { binary: t.binary } : {}) });
         }
@@ -1113,7 +1481,15 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
         }
     }
     // "k" + "g" is written \kilogram (R011)
-    const settled = settlePrefixes(flat.map(t => (t.unit === 'gram' && t.pow === 3 ? { ...t, unit: 'kilogram', pow: 0 } : t)), extraPow, parsed.denPow10);
+    const flatKg = flat.map(t => (t.unit === 'gram' && t.pow === 3 ? { ...t, unit: 'kilogram', pow: 0 } : t));
+    let settled = settlePrefixes(flatKg, extraPow, parsed.denPow10);
+    // More prefixes than one per side cannot be merged into one prefix ("µΩ cm" is 10⁻⁸ Ω m): the units are
+    // written without prefixes, and the powers of ten of the prefixes go into the number
+    let moved = 0;
+    if (!settled && !flatKg.some(t => t.binary)) {
+        moved = flatKg.reduce((sum, t) => sum + t.pow * t.exp, 0) + parsed.pow10;
+        settled = flatKg.map(t => ({ unit: t.unit, exp: t.exp }));
+    }
     if (!settled) {
         return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.R015, explanation: `"${raw}" cannot be written in D-SI with at most one prefix in the numerator and one in the denominator (R015, D-SI guide p. 73) without changing the value.` };
     }
@@ -1121,73 +1497,180 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
     if (!c.ok) {
         return { dsi: '', cls: 'improvable', notes: a.notes, page: c.errors[0]?.page, explanation: `"${raw}" has no valid D-SI form of the same size: ${issuesText(c.errors)}` };
     }
-    const check = verifyParsed(readAs, parsed, formatDsi(c.tokens), a.kind);
+    const dsi = formatDsi(c.tokens);
+    const check = verifyParsed(readAs, parsed, dsi, a.kind, moved);
     if (!check.ok) return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: check.reason };
-    const pow10Note = parsed.pow10 !== 0 && !parsed.tokens.some(t => t.def.equiv)
-        ? ` The power of ten written with the unit is carried by the prefix (prefixes express the powers of ten of a value, D-SI guide Section 8, p. 40), so the number stays as printed.` : '';
+    const valueExp = check.valueExp;
+    const qudt = qudtFor(bare, dsi, a.kind ?? kindFromContext(raw, ctx));
     return {
-        dsi: formatDsi(c.tokens), cls: c.cls, ambiguous: ambiguous || undefined, notes: a.notes, page: DSI_CLASS_PAGE[c.cls],
-        explanation: explainDsi(c) + decided + (equivNotes.length ? ` ${equivNotes.join('; ')}, so the value is unchanged.` : '') + pow10Note + notesSentence(a.notes),
+        dsi, cls: c.cls, ambiguous: ambiguous || undefined, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(valueExp ? { valueExp } : {}), ...(qudt ? { qudt } : {}),
+        explanation: explainDsi(c) + decided + renamedSentence(raw, parsed) + (equivNotes.length ? ` ${equivNotes.join('; ')}, so the value is unchanged.` : '')
+            + (valueExp ? valueExpSentence(valueExp, moved
+                ? `"${raw}" has more prefixes than one in the numerator or the denominator, which D-SI does not allow (rule R015, p. 73) and which cannot be merged into one prefix, so the units are written without prefixes and their powers of ten (10^${valueExp} in all) are written in the number.`
+                : `The power of ten written with the unit (10^${valueExp}) is not turned into a prefix but written in the number.`) : '')
+            + (qudt ? ` The certificate says it is a ${KIND_UNITS[(a.kind ?? kindFromContext(raw, ctx))!].label}, which the unit does not say, so it is also written as the QUDT quantity kind ${qudt} (si:quantityTypeQUDT).` : '')
+            + notesSentence(a.notes),
     };
 };
 
-/** The parsed unit against a D-SI unit: same size, same quantity on each side, same named units. */
-const verifyParsed = (raw: string, h: HumanUnit, dsi: string, kind?: RatioKind): { ok: boolean; reason: string } => {
+/**
+ * The parsed unit against a D-SI unit: same size, same quantity on each side, same named units. A
+ * power of ten written with the unit may be in the D-SI unit (as a prefix) or in the number (valueExp).
+ */
+const verifyParsed = (raw: string, h: HumanUnit, dsi: string, kind?: RatioKind, moved = 0): { ok: boolean; reason: string; valueExp: number } => {
+    const fail = (reason: string) => ({ ok: false, reason, valueExp: 0 });
     const c = checkDsi(dsi);
-    if (!c.ok) return { ok: false, reason: `${dsi} breaks the D-SI rules: ${issuesText(c.errors)}` };
+    if (!c.ok) return fail(`${dsi} breaks the D-SI rules: ${issuesText(c.errors)}`);
     const hs = humanSize(h);
     const special = c.tokens.some(t => UNIT_BY_ID.get(t.unit)!.special) || h.tokens.some(t => t.def.dsi && UNIT_BY_ID.get(t.def.dsi)!.special);
     if (special) {
         // Degree Celsius and logarithmic units: only the very same units qualify
         const flat = h.tokens.map(t => `${t.pow}|${t.def.dsi}|${t.exp}`).join(',');
         const back = c.tokens.map(t => `${t.prefix ? PREFIX_BY_ID.get(t.prefix)?.pow ?? 0 : 0}|${t.unit}|${t.exp}`).join(',');
-        return flat === back && h.pow10 === 0 ? { ok: true, reason: '' } : { ok: false, reason: `${dsi} is not the same unit as "${raw}".` };
+        return flat === back && h.pow10 === 0 && h.expPow === 0 ? { ok: true, reason: '', valueExp: 0 } : fail(`${dsi} is not the same unit as "${raw}".`);
     }
-    // A ratio of a stated kind (ppb as a mass fraction, % (w/v) as a mass concentration): exactly the
-    // unit of that kind, and nothing else
-    const ratioTok = h.tokens.length === 1 && h.pow10 === 0 && h.tokens[0].def.ratio !== undefined && (!h.tokens[0].def.dsi || kind === 'massConcentration') ? h.tokens[0] : null;
+    // A ratio of a stated kind (ppb as a mass fraction, % (w/v) as a mass concentration): a unit of that
+    // kind and size, or the preferred one (% (w/v) in g/L, with the number times 10)
+    const ratioTok = h.tokens.length === 1 && h.pow10 === 0 && h.expPow === 0 && h.tokens[0].def.ratio !== undefined && (!h.tokens[0].def.dsi || kind === 'massConcentration') ? h.tokens[0] : null;
     if (ratioTok) {
-        if (!kind) return { ok: false, reason: `"${raw}" has no D-SI identifier and the kind of fraction is not known.` };
-        const expect = ratioAsFraction(ratioTok.def.ratio!, kind);
-        return expect && formatDsi(expect) === formatDsi(c.tokens) ? { ok: true, reason: '' } : { ok: false, reason: `${dsi} is not a ${KIND_UNITS[kind].label} of the size of "${raw}".` };
+        if (!kind) return fail(`"${raw}" has no D-SI identifier and the kind of fraction is not known.`);
+        const valueExp = ratioMatches(ratioTok.def.ratio!, kind, c);
+        return valueExp === null ? fail(`${dsi} is not a ${KIND_UNITS[kind].label} of the size of "${raw}".`) : { ok: true, reason: '', valueExp };
     }
-    if (hs.factor === null || c.factor === null) return { ok: false, reason: `The size of "${raw}" or ${dsi} is not fixed, so they cannot be compared.` };
-    if (!sameDim(hs.dim, c.dim)) return { ok: false, reason: `${dsi} measures a different quantity than "${raw}".` };
-    if (!sameFactor(hs.factor, c.factor)) return { ok: false, reason: `${dsi} is not the same size as "${raw}", so the value would have to change.` };
+    if (hs.factor === null || c.factor === null) return fail(`The size of "${raw}" or ${dsi} is not fixed, so they cannot be compared.`);
+    if (!sameDim(hs.dim, c.dim)) return fail(`${dsi} measures a different quantity than "${raw}".`);
+    let valueExp = 0;
+    if (!sameFactor(hs.factor, c.factor)) {
+        const shift = h.expPow + moved;
+        if (shift !== 0 && sameFactor(hs.factor / Math.pow(10, shift), c.factor)) valueExp = shift;
+        else return fail(`${dsi} is not the same size as "${raw}", so the value would have to change.`);
+    }
     const sides = dsiSides(c.tokens);
     if (!sameDim(sides.numDim, hs.numDim) || !sameDim(sides.denDim, hs.denDim)) {
-        return { ok: false, reason: `${dsi} has the same size as "${raw}" but describes another quantity (numerator and denominator differ).` };
+        return fail(`${dsi} has the same size as "${raw}" but describes another quantity (numerator and denominator differ).`);
     }
     const namedHuman = new Set(h.tokens.map(t => t.def.named).filter(Boolean) as string[]);
     const namedDsi = new Set(c.tokens.map(t => (UNIT_BY_ID.get(t.unit)!.named ? t.unit : '')).filter(Boolean));
     const sameNamed = namedHuman.size === namedDsi.size && Array.from(namedHuman).every(n => namedDsi.has(n));
-    if (!sameNamed) return { ok: false, reason: `${dsi} replaces a named unit of "${raw}" (such as % or Bq) with another one of the same size.` };
-    return { ok: true, reason: '' };
+    if (!sameNamed) return fail(`${dsi} replaces a named unit of "${raw}" (such as % or Bq) with another one of the same size.`);
+    return { ok: true, reason: '', valueExp };
 };
 
+export interface SameUnit {
+    ok: boolean;
+    reason: string;
+    /** A power of ten written into the number (and the uncertainty) when the value is written with this D-SI unit. */
+    valueExp: number;
+    /** Written in si:hybrid, with this unit as printed. */
+    hybrid?: HybridWriting;
+}
+
 /**
- * Is the D-SI unit exactly the unit from the certificate? Same size (so the value stays as it is),
- * same dimension in the numerator and in the denominator (mg/kg is not mmol/mol), and the same named
- * units (Bq is not Hz). Notes in the unit text (basis, analyte) are not part of the unit. A ratio
- * without a D-SI identifier may become a fraction of a stated kind.
+ * Is the D-SI unit exactly the unit from the certificate? Same size (so the value stays as it is, or
+ * only a power of ten written with the unit moves into the number), same dimension in the numerator
+ * and in the denominator (mg/kg is not mmol/mol), and the same named units (Bq is not Hz). Notes in the
+ * unit text (basis, analyte) are not part of the unit. A ratio without a D-SI identifier may become a
+ * fraction of a stated kind. A unit outside the SI with a defined conversion is accepted with its SI
+ * unit, written in si:hybrid.
  */
-export const verifySameUnit = (unitText: string, dsi: string, kind?: RatioKind, opts: { ambiguousAsUnit?: boolean } = {}): { ok: boolean; reason: string } => {
+export const verifySameUnit = (unitText: string, dsi: string, kind?: RatioKind, opts: { ambiguousAsUnit?: boolean } = {}): SameUnit => {
+    const fail = (reason: string): SameUnit => ({ ok: false, reason, valueExp: 0 });
     const c = checkDsi(dsi);
-    if (!c.ok) return { ok: false, reason: `${dsi} breaks the D-SI rules: ${issuesText(c.errors)}` };
-    let raw = String(unitText ?? '').trim();
+    if (!c.ok) return fail(`${dsi} breaks the D-SI rules: ${issuesText(c.errors)}`);
+    const raw = String(unitText ?? '').trim();
     if (raw.startsWith('\\')) {
         const o = checkDsi(raw);
-        return o.ok && formatDsi(o.tokens) === formatDsi(c.tokens) ? { ok: true, reason: '' } : { ok: false, reason: `${dsi} is not the unit ${raw}.` };
+        return o.ok && formatDsi(o.tokens) === formatDsi(c.tokens) ? { ok: true, reason: '', valueExp: 0 } : fail(`${dsi} is not the unit ${raw}.`);
     }
     const a = analyzeUnit(raw);
-    if (a.dimensionOne) return formatDsi(c.tokens) === '\\one' ? { ok: true, reason: '' } : { ok: false, reason: `"${raw}" is of dimension one; its D-SI unit is \\one.` };
-    if (a.notUnit) return { ok: false, reason: a.notUnit };
-    if (a.ambiguous && !(opts.ambiguousAsUnit && a.ambiguous.token)) return { ok: false, reason: a.ambiguous.reason };
+    if (a.dimensionOne) return formatDsi(c.tokens) === '\\one' ? { ok: true, reason: '', valueExp: 0 } : fail(`"${raw}" is of dimension one; its D-SI unit is \\one.`);
+    // A unit outside the SI with a defined conversion: its SI unit, in si:hybrid ("rad" with \gray is the dose unit)
+    const hy = HYBRID_UNITS.get(hybridKey(a.core)) ?? DOSE_RAD[hybridKey(a.core)];
+    if (hy && formatDsi(checkDsi(hy.si).tokens) === formatDsi(c.tokens)) return { ok: true, reason: '', valueExp: 0, hybrid: { asWritten: printedUnit(raw, a), def: hy } };
+    if (a.notUnit) return fail(a.notUnit);
+    if (a.ambiguous && !(opts.ambiguousAsUnit && a.ambiguous.token)) return fail(a.ambiguous.reason);
     let core = a.core;
     if (core === 'C') core = c.tokens.some(t => t.unit === 'degreecelsius') ? '°C' : 'C';
     const read = readCore(core);
-    if (!read.h) return { ok: false, reason: `"${raw}" could not be read as a unit, so ${dsi} cannot be checked against it.` };
-    return verifyParsed(raw, read.h, dsi, kind ?? a.kind);
+    if (!read.h) return fail(`"${raw}" could not be read as a unit, so ${dsi} cannot be checked against it.`);
+    // ppb or ‰ without the kind of fraction: 10⁻³ ppm or 10⁻³, in si:hybrid
+    const h = read.h;
+    const lone = h.tokens.length === 1 && h.pow10 === 0 && h.expPow === 0 && h.tokens[0].def.ratio !== undefined && !h.tokens[0].def.dsi ? h.tokens[0] : null;
+    if (lone && !(kind ?? a.kind)) {
+        const fallback = lone.sym === 'ppb' ? '\\ppm' : '\\one';
+        if (formatDsi(c.tokens) === fallback) return { ok: true, reason: '', valueExp: -3, hybrid: { asWritten: lone.sym } };
+    }
+    return verifyParsed(raw, h, dsi, kind ?? a.kind);
+};
+
+/** How a value is written to the XML with a D-SI unit: see unitWriting. */
+export interface UnitWriting extends SameUnit {
+    /** si:label (an isotope delta value). */
+    label?: string;
+    /** si:quantityTypeQUDT. */
+    qudt?: string;
+    /** ppb or ‰ without the kind of fraction (written in si:hybrid, with a warning). */
+    kindUnknown?: boolean;
+    /** Quality class of what is written (a hybrid is at best gold, rule R054). */
+    cls: DsiClass;
+}
+
+/**
+ * How the value of a row is written with its D-SI unit (from the rules, the AI or typed): unchanged,
+ * with a power of ten in the number, or in si:hybrid; with si:label and si:quantityTypeQUDT where they
+ * apply. `ok` false: the D-SI unit does not fit the unit as printed (the value is then written
+ * unchanged, and the generator warns).
+ */
+export const unitWriting = (unitText: string, dsi: string, ctx?: UnitContext): UnitWriting => {
+    const d = String(dsi ?? '').replace(/\s+/g, '');
+    const c = checkDsi(d);
+    if (!d || !c.ok) return { ok: false, reason: d ? `${d} breaks the D-SI rules: ${issuesText(c.errors)}` : 'No D-SI unit.', valueExp: 0, cls: 'improvable' };
+    const raw = String(unitText ?? '').trim();
+    if (!raw) return { ok: true, reason: '', valueExp: 0, cls: c.cls };
+    // The rules wrote this D-SI unit: their own decision (power of ten in the number, si:hybrid, label, QUDT)
+    const rules = toDsi(raw, ctx);
+    if (rules.dsi && rules.dsi === d) {
+        return {
+            ok: true, reason: '', valueExp: rules.valueExp ?? 0, cls: rules.cls,
+            ...(rules.hybrid ? { hybrid: rules.hybrid } : {}), ...(rules.label ? { label: rules.label } : {}),
+            ...(rules.qudt ? { qudt: rules.qudt } : {}), ...(rules.kindUnknown ? { kindUnknown: true } : {}),
+        };
+    }
+    const texts = (ctx?.texts || []).map(t => String(t ?? ''));
+    const a = analyzeUnit(raw);
+    const kind = a.kind ?? kindFromContext(raw, ctx);
+    if (isKindDependent(raw)) {
+        const sym = a.core;
+        const fallback = sym === 'ppb' ? '\\ppm' : '\\one';
+        if (d === fallback) {
+            const label = sym === '‰' ? deltaLabel(raw, texts, a.notes) : null;
+            return { ok: true, reason: '', valueExp: -3, hybrid: { asWritten: sym }, ...(label ? { label } : { kindUnknown: true }), cls: hybridClass(c.cls) };
+        }
+        // A fraction whose kind the certificate states, or one decided earlier (by the AI, which had to
+        // quote the kind from the certificate, or by hand)
+        for (const k of [kind, 'mass', 'amount', 'volume'] as Array<RatioKind | undefined>) {
+            if (!k) continue;
+            const v = verifySameUnit(raw, d, k);
+            if (v.ok) return { ...v, cls: c.cls };
+        }
+        return { ok: false, reason: `${d} is not a fraction of the size of "${raw}".`, valueExp: 0, cls: c.cls };
+    }
+    const v = verifySameUnit(raw, d, undefined, { ambiguousAsUnit: true });
+    if (!v.ok) return { ...v, cls: c.cls };
+    if (v.hybrid) return { ...v, cls: hybridClass(c.cls) };
+    const qudt = qudtFor(a.core, d, kind);
+    return { ...v, ...(qudt ? { qudt } : {}), cls: c.cls };
+};
+
+/** Values as the XML writes them, for the notices: "196.4e3 \gram\mole\tothe{-1}", or both elements of si:hybrid. */
+export const writtenValueText = (value: string, dsi: string, w: UnitWriting | null): string => {
+    const v = String(value ?? '').trim();
+    if (!w || !w.ok) return `${v} ${dsi}`;
+    if (w.hybrid) {
+        const si = w.hybrid.def ? hybridValue(v, w.hybrid.def) : shiftDecimal(v, w.valueExp);
+        return `si:hybrid with ${si ?? '?'} ${dsi} and ${v} ${w.hybrid.asWritten}`;
+    }
+    return `${shiftDecimal(v, w.valueExp)} ${dsi}`;
 };
 
 /** Why a D-SI unit has its quality class: one sentence per kind of part, with the rules and pages. */

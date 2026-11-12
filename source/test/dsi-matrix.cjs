@@ -31,9 +31,12 @@ const xmlFor = (rows) => G.buildDrmdXml({
 const rowsXml = [];
 for (const [i, sc] of SCENARIOS.entries()) {
   const r = D.toDsi(sc.unit, sc.ctx ? { texts: sc.ctx } : undefined);
-  const expCls = sc.expect ? D.checkDsi(sc.expect).cls : 'improvable';
-  let ok = r.dsi === sc.expect && r.cls === expCls;
-  let detail = `got ${r.dsi || '(not converted)'} ${r.cls}: ${r.explanation}`;
+  // A hybrid is at best gold (rule R054, D-SI guide p. 83)
+  const baseCls = sc.expect ? D.checkDsi(sc.expect).cls : 'improvable';
+  const expCls = sc.hybrid && baseCls === 'platinum' ? 'gold' : baseCls;
+  let ok = r.dsi === sc.expect && r.cls === expCls && (r.valueExp || 0) === (sc.exp || 0) && (r.hybrid?.asWritten ?? null) === (sc.hybrid ?? null)
+    && (r.label ?? null) === (sc.label ?? null) && (r.qudt ?? null) === (sc.qudt ?? null);
+  let detail = `got ${r.dsi || '(not converted)'} ${r.cls} exp ${r.valueExp || 0} hybrid ${r.hybrid?.asWritten ?? '-'} label ${r.label ?? '-'} qudt ${r.qudt ?? '-'}: ${r.explanation}`;
   if (sc.rule) {
     // A typed D-SI string that breaks a rule: the rule must be named, with its page
     const c = D.checkDsi(sc.unit);
@@ -41,30 +44,45 @@ for (const [i, sc] of SCENARIOS.entries()) {
     ok = ok && named;
     if (!named) detail += ` | rules named: ${c.errors.map(e => e.rule).join(',')}`;
   }
-  check(`[${sc.cat}] ${JSON.stringify(sc.unit)}${sc.ctx ? ` (${sc.ctx[0]})` : ''} → ${sc.expect || '(not converted)'}`, ok, detail);
+  check(`[${sc.cat}] ${JSON.stringify(sc.unit)}${sc.ctx ? ` (${sc.ctx[0]})` : ''} → ${sc.expect || '(not converted)'}${sc.exp ? ` e${sc.exp}` : ''}${sc.hybrid ? ` si:hybrid with ${sc.hybrid}` : ''}${sc.label ? ` label ${sc.label}` : ''}${sc.qudt ? ` QUDT ${sc.qudt}` : ''}`, ok, detail);
   report.scenarios.push({ ...sc, got: r.dsi, gotCls: r.cls, expCls, ok, explanation: r.explanation, page: r.page ?? null, notes: (r.notes || []).map(n => `${n.type}: ${n.text}`), ambiguous: !!r.ambiguous, noAi: !!r.noAi });
-  rowsXml.push({ uuid: `q${i}`, name: `Row ${i}`, value: VALUE, unit: sc.unit, dsiValue: VALUE, dsiUnit: r.dsi, dsiSource: 'rules', uncertainty: '0.012', coverageFactor: '2', coverageProbability: '0.95', distribution: '', identifiers: [] });
+  rowsXml.push({ uuid: `q${i}`, name: sc.ctx ? sc.ctx[0] : `Row ${i}`, value: VALUE, unit: sc.unit, dsiValue: VALUE, dsiUnit: r.dsi, dsiSource: 'rules', uncertainty: '0.012', coverageFactor: '2', coverageProbability: '0.95', distribution: '', identifiers: [] });
 }
 // One document with every scenario as a row: the value must be written exactly, the unit as expected
 const { xml, notes } = xmlFor(rowsXml);
 const blocks = xml.split(/<drmd:quantity[ >]/).slice(1);
 check('XML: one quantity per scenario', blocks.length === SCENARIOS.length, `${blocks.length} blocks for ${SCENARIOS.length} scenarios`);
 let valuesOk = 0, unitsOk = 0, uncOk = 0;
+// The expected XML of each row, from the scenario alone: the value and uncertainty as printed, with the
+// power of ten in the number (exp), and for si:hybrid first the SI element, then the element as printed
+const withExp = (v, n) => (n ? `${v}e${n}` : v);
 SCENARIOS.forEach((sc, i) => {
   const b = blocks[i] || '';
-  const value = (b.match(/<si:value>([^<]*)<\/si:value>/) || [])[1];
-  const unit = (b.match(/<si:unit>([^<]*)<\/si:unit>/) || [])[1];
-  const unc = (b.match(/<si:valueExpandedMU>([^<]*)</) || [])[1];
+  const all = (re) => Array.from(b.matchAll(re)).map(m => m[1]);
+  const values = all(/<si:value>([^<]*)<\/si:value>/g), units = all(/<si:unit>([^<]*)<\/si:unit>/g), uncs = all(/<si:valueExpandedMU>([^<]*)</g);
+  const labels = all(/<si:label>([^<]*)<\/si:label>/g), qudts = all(/<si:quantityTypeQUDT>([^<]*)<\/si:quantityTypeQUDT>/g);
   const unescape = (s) => String(s ?? '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
-  const vOk = value === VALUE;
-  const uOk = sc.expect ? unit === sc.expect : unescape(unit) === sc.unit.trim().replace(/\s+/g, '');
-  if (vOk) valuesOk++; if (uOk) unitsOk++; if (unc === '0.012') uncOk++;
-  report.scenarios[i].xmlValue = value ?? null; report.scenarios[i].xmlUnit = unit ?? null;
-  if (!vOk || !uOk) check(`XML row ${JSON.stringify(sc.unit)}: value ${VALUE} unchanged and unit ${sc.expect || 'as typed'}`, false, `si:value ${value} si:unit ${unit}`);
+  const hybrid = /<si:hybrid>/.test(b);
+  let vOk, uOk, cOk;
+  if (sc.hybrid) {
+    const siV = sc.si ? sc.si[0] : withExp(VALUE, sc.exp), siU = sc.si ? sc.si[1] : withExp('0.012', sc.exp);
+    vOk = hybrid && values.length === 2 && values[0] === siV && values[1] === VALUE;
+    uOk = units.length === 2 && units[0] === sc.expect && unescape(units[1]) === sc.hybrid.replace(/\s+/g, '');
+    cOk = uncs.length === 2 && uncs[0] === siU && uncs[1] === '0.012';
+  } else {
+    vOk = !hybrid && values.length === 1 && values[0] === withExp(VALUE, sc.exp);
+    uOk = units.length === 1 && (sc.expect ? units[0] === sc.expect : unescape(units[0]) === sc.unit.trim().replace(/\s+/g, ''));
+    cOk = uncs.length === 1 && uncs[0] === withExp('0.012', sc.exp);
+  }
+  const lOk = sc.label ? labels.length === (sc.hybrid ? 2 : 1) && labels.every(l => l === sc.label) : labels.length === 0;
+  const qOk = sc.qudt ? qudts.length === 1 && qudts[0] === sc.qudt : qudts.length === 0;
+  if (vOk) valuesOk++; if (uOk) unitsOk++; if (cOk) uncOk++;
+  report.scenarios[i].xmlValue = values.join(' | ') || null; report.scenarios[i].xmlUnit = units.join(' | ') || null;
+  if (!vOk || !uOk || !cOk || !lOk || !qOk) check(`XML row ${JSON.stringify(sc.unit)}: value, unit, uncertainty, label and QUDT as expected`, false, `si:value ${values.join('|')} si:unit ${units.join('|')} U ${uncs.join('|')} label ${labels.join('|')} QUDT ${qudts.join('|')}`);
 });
-check(`XML: the value is written exactly as printed in all ${SCENARIOS.length} rows`, valuesOk === SCENARIOS.length, `${valuesOk}`);
+check(`XML: the value as printed, with only the expected power of ten or si:hybrid conversion, in all ${SCENARIOS.length} rows`, valuesOk === SCENARIOS.length, `${valuesOk}`);
 check(`XML: the expected D-SI unit (or the unit as typed) in all ${SCENARIOS.length} rows`, unitsOk === SCENARIOS.length, `${unitsOk}`);
-check(`XML: the uncertainty is written exactly as given in all ${SCENARIOS.length} rows`, uncOk === SCENARIOS.length, `${uncOk}`);
+check(`XML: the uncertainty as given (same power of ten or conversion) in all ${SCENARIOS.length} rows`, uncOk === SCENARIOS.length, `${uncOk}`);
 const noteIds = notes.reduce((m, n) => (m[n.code] = (m[n.code] || 0) + 1, m), {});
 report.xmlNotes = noteIds;
 check('XML: notes in unit texts are reported (DSI-UNIT-ANNOTATION)', (noteIds['DSI-UNIT-ANNOTATION'] || 0) > 0);

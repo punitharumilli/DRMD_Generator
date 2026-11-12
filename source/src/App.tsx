@@ -10,12 +10,12 @@ import { extractStructuredDataFromPdf, clearQuotaMemory, ExtractionReport } from
 import { mapExtractedToDrmd, resolveIdentifiers, applyIdentifierPatch, createInitialDrmd, generateUUID, lookUpRorAgain, lookUpChemicalAgain, lookUpChemicalsAgain, materialLookupContext, chemKey, refineUnitsWithAi, applyUnitPatch, needsUnitAi, unitContextTexts } from './services/extractionPipeline';
 import { generateDrmdXml } from './utils/xmlGenerator';
 import { convertToDSI, getDsiPreview, dsiFor } from './utils/unitConverter';
-import { checkDsi, explainDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, guidePageUrl, DsiClass, DSI_CLASS_LABEL, DSI_CLASS_MEANING, DSI_CLASS_PAGE } from './utils/dsi';
+import { checkDsi, explainDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, guidePageUrl, DsiClass, DSI_CLASS_LABEL, DSI_CLASS_MEANING, DSI_CLASS_PAGE, unitWriting, writtenValueText, UnitWriting } from './utils/dsi';
 import { readDrmdXml } from './utils/drmdFile';
 import { validateDrmd } from './utils/validator';
 import { docsUrlFor, DOCS_PATHS, VIDEO_GUIDE_URL } from './utils/docsLinks';
 import { safeHttpUrl } from './utils/safeUrl';
-import { toXsdDate, toUncertaintyString, toCoverageFactor, toCoverageProbability } from './utils/xmlValues';
+import { toXsdDate, toUncertaintyString, toCoverageFactor, toCoverageProbability, toDecimalString } from './utils/xmlValues';
 import { Icon, Spinner, formatElapsed } from './components/ui';
 import { PROVIDERS, PROVIDER_IDS, ProviderId, LlmConnection, ModelOption, AUTO, listModels } from './services/providers';
 import { subscribeUsage, usageSnapshot, clearUsage } from './services/usage';
@@ -1972,12 +1972,13 @@ const App: React.FC = () => {
               // The rules' own explanation, when they wrote this unit (it names notes such as "dry mass")
               const rules = unit ? dsiFor(unit, ctx) : null;
               const why = rules && rules.dsi === dsi ? rules.explanation : explainDsi(c);
-              text = `Converted for the XML: the unit ${shownUnit} marked here is written in D-SI as ${dsi}, ${how}. ${why}${value ? ` The value ${value} stays exactly as it is.` : ''}`
+              const valueText = valueInXml(value, dsi, unitWriting(unit || '\\one', dsi, ctx));
+              text = `Converted for the XML: the unit ${shownUnit} marked here is written in D-SI as ${dsi}, ${how}. ${why}${valueText}`
                   + (mismatch ? ` Note: ${dsi} is not the same size as "${unit}"; check it.` : '');
               conversion = {
                   printed: unit && unit !== '\\one' && unit !== dsi ? unit : '',
                   written: dsi,
-                  reason: `Units are written in D-SI, ${how}. ${why}${value ? ` The value ${value} stays exactly as it is.` : ''}`
+                  reason: `Units are written in D-SI, ${how}. ${why}${valueText}`
                       + (mismatch ? ` Note: ${dsi} is not the same size as "${unit}"; check it.` : ''),
               };
               page = DSI_CLASS_PAGE[c.cls];
@@ -3734,6 +3735,7 @@ const App: React.FC = () => {
                                                                 unit={q.unit}
                                                                 dsi={q.dsiUnit}
                                                                 busy={!!unitBusy[q.uuid]}
+                                                                writing={q.dsiUnit ? unitWriting(q.unit || '\\one', q.dsiUnit, { texts: unitContextTexts(q as any, res, prop, drmdData.statements?.official?.metrologicalTraceability) }) : null}
                                                                 onFocus={() => showDsiSource(q, res, prop)}
                                                                 onChange={(val) => {
                                                                     const list = [...drmdData.properties];
@@ -5376,6 +5378,25 @@ const TextArea: React.FC<{ label: string; value: string; onChange: (v: string) =
     );
 };
 
+/** The value as the XML writes it with its D-SI unit, for the notice ("" without a value). */
+const valueInXml = (value: string, dsi: string, w: UnitWriting): string => {
+    const num = toDecimalString(value);
+    if (!value) return '';
+    if (num === null || !w.ok) return ` The value ${value} is written as it is.`;
+    if (w.hybrid) return ` In the XML the value is written in ${writtenValueText(num, dsi, w)} (as printed).${w.label ? ` si:label: ${w.label}.` : ''}`;
+    if (w.valueExp) return ` In the XML the value is written ${writtenValueText(num, dsi, w)}: the power of ten is in the number, and the digits stay as printed.`;
+    return ` The value ${value} stays exactly as it is.${w.qudt ? ` The kind of quantity is also written: ${w.qudt} (si:quantityTypeQUDT).` : ''}`;
+};
+
+const SUPER: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻' };
+/** A short line under the D-SI unit when the XML writes more than the unit: a power of ten in the number, si:hybrid, si:label, QUDT. */
+const dsiCellNote = (w: UnitWriting | null): string => {
+    if (!w || !w.ok) return '';
+    if (w.hybrid) return w.kindUnknown ? `si:hybrid with ${w.hybrid.asWritten}; kind of fraction not stated` : w.label ? `si:hybrid with ${w.hybrid.asWritten}; label ${w.label}` : `si:hybrid: SI value and ${w.hybrid.asWritten} as printed`;
+    if (w.valueExp) return `number × 10${String(w.valueExp).split('').map(c => SUPER[c] ?? c).join('')} in the XML`;
+    return w.qudt ? `QUDT: ${w.qudt}` : '';
+};
+
 /** An editable table cell; flagged like the fields when the value is not in the PDF. */
 const DSI_BADGE: Record<DsiClass, string> = {
     platinum: 'bg-petrol-50 text-petrol-800 border-petrol-200',
@@ -5386,13 +5407,15 @@ const DSI_BADGE: Record<DsiClass, string> = {
 };
 
 /** The D-SI unit of a row: editable, checked against the D-SI rules, with its quality class. */
-const DsiCell: React.FC<{ unit: string; dsi: string; busy?: boolean; onFocus: () => void; onChange: (v: string) => void }> = ({ unit, dsi, busy, onFocus, onChange }) => {
+const DsiCell: React.FC<{ unit: string; dsi: string; busy?: boolean; writing?: UnitWriting | null; onFocus: () => void; onChange: (v: string) => void }> = ({ unit, dsi, busy, writing, onFocus, onChange }) => {
     const [editing, setEditing] = useState(false);
     const value = String(dsi ?? '');
     const hasUnit = String(unit ?? '').trim() !== '';
     const check = value.trim() ? checkDsi(value) : null;
     const invalid = !!check && !check.ok;
-    const cls: DsiClass | null = check ? (check.ok ? check.cls : null) : (hasUnit ? 'improvable' : null);
+    // A hybrid is at best gold (rule R054): the class of what the XML writes
+    const cls: DsiClass | null = check ? (check.ok ? (writing?.ok && writing.hybrid ? writing.cls : check.cls) : null) : (hasUnit ? 'improvable' : null);
+    const note = dsiCellNote(writing ?? null);
     const title = invalid
         ? `Not a valid D-SI unit: ${issuesText(check!.errors)}`
         : cls ? `D-SI class ${DSI_CLASS_LABEL[cls]}: ${DSI_CLASS_MEANING[cls]}` : 'D-SI unit written to the XML';
@@ -5440,6 +5463,7 @@ const DsiCell: React.FC<{ unit: string; dsi: string; busy?: boolean; onFocus: ()
                 </button>
             )}
             {editing && badge}
+            {note && <span className="text-2xs text-ink-muted leading-tight break-words" data-dsi-note="">{note}</span>}
         </div>
     );
 };

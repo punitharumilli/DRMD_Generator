@@ -80,6 +80,81 @@ export const readNumber = (raw: unknown): NumberReading => {
 /** The number as si:decimalType, or null (see readNumber). */
 export const toDecimalString = (raw: unknown): string | null => readNumber(raw).value;
 
+// ── Exact arithmetic on numbers of si:decimalType (no floating point: the digits are never changed by chance) ──
+
+const MANTISSA = /^([-+]?)(\d*)(?:\.(\d*))?(?:[eE]([-+]?\d+))?$/;
+const TEN = BigInt(10);
+const pow10n = (n: number): bigint => TEN ** BigInt(n);
+const absn = (n: bigint): bigint => (n < BigInt(0) ? -n : n);
+
+/**
+ * A number with a power of ten added to its exponent, its digits exactly as printed: "196.4", 3 →
+ * "196.4e3"; "5", -3 → "5e-3"; "1.2e-3", 3 → "1.2". The D-SI number format allows an exponent
+ * (D-SI guide, rule R003, p. 70). Returns the input unchanged when the shift is 0 or it is not a number.
+ */
+export const shiftDecimal = (value: string, n: number): string => {
+    const s = String(value ?? '').trim();
+    const m = s.match(/^([-+]?(?:\d+\.?\d*|\.\d+))(?:[eE]([-+]?\d+))?$/);
+    if (!m || !n) return s;
+    const exp = Number(m[2] ?? 0) + n;
+    return exp === 0 ? m[1] : `${m[1]}e${exp}`;
+};
+
+/** floor(log10(n / d)) for positive n and d. */
+const floorLog10 = (n: bigint, d: bigint): number => {
+    let l = n.toString().length - d.toString().length;
+    const atLeast = (k: number) => (k >= 0 ? n >= d * pow10n(k) : n * pow10n(-k) >= d);
+    while (!atLeast(l)) l--;
+    while (atLeast(l + 1)) l++;
+    return l;
+};
+
+/** z × 10^q written as si:decimalType: plain digits, or with an exponent when that is shorter to read. */
+const formatScaled = (z: bigint, q: number): string => {
+    const neg = z < BigInt(0);
+    const digits = absn(z).toString();
+    if (digits === '0') return '0';
+    const sign = neg ? '-' : '';
+    const magnitude = digits.length - 1 + q; // exponent of the first digit
+    if (q < 0 && magnitude >= -4) {
+        const padded = digits.padStart(-q + 1, '0');
+        return `${sign}${padded.slice(0, padded.length + q)}.${padded.slice(padded.length + q)}`;
+    }
+    if (q === 0 && magnitude < 9) return `${sign}${digits}`;
+    return `${sign}${digits[0]}${digits.length > 1 ? `.${digits.slice(1)}` : ''}e${magnitude}`;
+};
+
+/**
+ * A number converted into another unit exactly: value × num / den + offNum / offDen, rounded half away
+ * from zero to two digits finer than the printed resolution after conversion (the place of the last
+ * printed digit times the factor). "150" lb × 0.453 592 37 → "68.039"; "98.6" °F → "310.1500" K.
+ * The rounding stays far below the resolution of the printed number. `scaleOnly` leaves out the offset
+ * (an uncertainty is only multiplied by the factor, D-SI guide p. 36). Null when it is not a number.
+ */
+export const convertDecimal = (value: string, num: bigint, den: bigint, offNum: bigint = BigInt(0), offDen: bigint = BigInt(1), scaleOnly = false): string | null => {
+    const m = String(value ?? '').trim().match(MANTISSA);
+    if (!m || (!m[2] && !m[3]) || num <= BigInt(0) || den <= BigInt(0) || offDen <= BigInt(0)) return null;
+    const frac = m[3] ?? '';
+    const exp = Number(m[4] ?? 0) - frac.length; // value = int × 10^exp
+    let int = BigInt((m[2] ?? '') + frac || '0');
+    if (m[1] === '-') int = -int;
+    // X = int × 10^exp as xn / xd
+    const xn = exp >= 0 ? int * pow10n(exp) : int;
+    const xd = exp >= 0 ? BigInt(1) : pow10n(-exp);
+    const on = scaleOnly ? BigInt(0) : offNum, od = scaleOnly ? BigInt(1) : offDen;
+    // Y = X × num/den + on/od
+    const yn = xn * num * od + on * xd * den;
+    const yd = xd * den * od;
+    // The place to round to: two digits finer than the converted resolution 10^exp × num/den
+    const q = exp + floorLog10(num, den) - 2;
+    // z = round(Y / 10^q)
+    const zn = q >= 0 ? yn : yn * pow10n(-q);
+    const zd = q >= 0 ? yd * pow10n(q) : yd;
+    const twice = (absn(zn) * BigInt(2) + zd) / (zd * BigInt(2)); // half away from zero
+    const z = zn < BigInt(0) ? -twice : twice;
+    return formatScaled(z, q);
+};
+
 /** Uncertainty: like toDecimalString, but tolerates "± 0.6", "+/- 0.6", "U = 0.6"; must be ≥ 0. */
 export const toUncertaintyString = (raw: unknown): string | null => {
     if (raw === undefined || raw === null) return null;
