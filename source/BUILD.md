@@ -23,8 +23,8 @@ The result is `dist/DRMD-Generator.html`. Copy it into the repository and push i
 | `src/services/pricing.ts` | Price list used for the cost shown in AI settings, with the date it was checked (`PRICES_CHECKED`) |
 | `src/services/llmService.ts` | Extraction prompts and schemas (the same for every provider), retries and model fallback |
 | `src/utils/pdfjs.ts` | Opens PDFs with the embedded pdf.js: one shared worker, the embedded image decoders, no scripts from PDFs |
-| `src/utils/dsi.ts` | D-SI unit rules from the D-SI guide v1.3 (DOI 10.5281/zenodo.3816686, each rule with its printed page in `GUIDE_PAGE`) and the D-SI 2.2.1 unit list (DOI 10.5281/zenodo.12200678): identifiers and quality classes, rules R001–R020, how a unit text is read (element symbols, hardness scales, notes such as "dry mass" or "as N"), conversion of units as written (never changing the value), and the check of AI answers |
-| `src/utils/xmlValues.ts` | Numbers as printed → `si:value` (digit groups, decimal comma, ambiguous "1,234") and the other value formats of the schema |
+| `src/utils/dsi.ts` | D-SI unit rules from the D-SI guide v1.3 (DOI 10.5281/zenodo.3816686, each rule with its printed page in `GUIDE_PAGE`) and the D-SI 2.2.1 unit list (DOI 10.5281/zenodo.12200678): identifiers and quality classes, rules R001–R020, how a unit text is read (unit names and abbreviations, element symbols, hardness scales, notes such as "dry mass" or "as N"), conversion of units as written, a power of ten in the number, `si:hybrid` for units outside the SI (factors from NIST SP 811), ppb and ‰, isotope delta values with `si:label`, QUDT quantity kinds, how a value is written with its D-SI unit (`unitWriting`), and the check of AI answers |
+| `src/utils/xmlValues.ts` | Numbers as printed → `si:value` (digit groups, decimal comma, ambiguous "1,234"), exact decimal arithmetic for a power of ten in the number and for the conversions of `si:hybrid`, and the other value formats of the schema |
 | `src/services/rateLimit.ts` | Requests per minute per key and model: limits learned from the providers, requests held back until they fit |
 | `src/types.ts` | The DRMD data model; `BinaryDocument` with the mark of the human-readable PDF (`rmDocument`) and its name in the XML (`rmDocumentName`) |
 | `src/utils/sourceForms.ts` | Other forms of a value to look for in the PDF (a date written out, a country by name or address) |
@@ -45,7 +45,8 @@ npm run test:dsi
 - `test/dsi-scenarios.cjs`: more than 1,100 units as printed in certificates, each with the D-SI unit it must give (or none), written from the SI brochure and the D-SI guide, with the page of the deciding rule.
 - `test/dsi-matrix.cjs`: runs every scenario through the generator's own code (rule engine and XML), plus number reading, the check of AI answers and speed. Writes `test/out-matrix/matrix.json`.
 - `test/dsi-xcheck.py` with `test/dsi_reference.py`: a second, independent implementation of the D-SI rules judges more than 120,000 generated D-SI strings; the generator must agree on every one. Needs Python 3.
-- `test/dsi-unit.cjs`, `test/rpm-unit.cjs`: shorter checks of the rule engine and of the requests-per-minute tracker.
+- `test/dsi-unit.cjs`, `test/rpm-unit.cjs`: shorter checks of the rule engine (with the exact decimal arithmetic) and of the requests-per-minute tracker.
+- `test/expect-hybrid.py`: computes the SI values of `si:hybrid` that the scenarios expect, independently, from the unit definitions (Python `decimal`). Needs Python 3.
 
 Run them after every change to `dsi.ts`, `xmlValues.ts` or `xmlGenerator.ts`. When a rule of the D-SI changes, change the scenario's expected unit first (with its source), then the code.
 

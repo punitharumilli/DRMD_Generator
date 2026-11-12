@@ -9,12 +9,26 @@
 //   expect: the D-SI unit the generator must write, or '' when it must NOT convert the unit (it is then
 //           written as typed, class "improvable", and the value is never changed).
 //   cite:   where the deciding rule is in the sources.
+//   exp:    a power of ten written into the number (196.4 "× 10³ g/mol" → 196.4e3 \gram\mole\tothe{-1}).
+//   hybrid: the unit as printed, written as the second element of si:hybrid (the first is the expected D-SI unit).
+//   si:     for si:hybrid with a conversion: the SI value of 12.345 and of the uncertainty 0.012, computed
+//           independently (test/expect-hybrid.py) from the definitions in NIST SP 811, Appendix B.
+//   label, qudt: si:label and si:quantityTypeQUDT.
 
 const P = { // prefixes of Table A.5 (p. 53): symbol → identifier
   da: 'deca', h: 'hecto', k: 'kilo', M: 'mega', G: 'giga', T: 'tera', P: 'peta', E: 'exa', Z: 'zetta', Y: 'yotta',
   d: 'deci', c: 'centi', m: 'milli', 'µ': 'micro', n: 'nano', p: 'pico', f: 'femto', a: 'atto', z: 'zepto', y: 'yocto',
 };
 const S = [];
+// The QUDT quantity kind a % or ppm unit text states by itself (m/m, wt%, vol%, mol/mol, at% …), written from the
+// QUDT names MassFraction, VolumeFraction and AmountOfSubstanceFraction; none for w/v, %RH, %IACS or a compound unit.
+const qudtOfText = (u) => {
+  if (!/^\s*(?:in )?(?:[A-Za-z.\-]*\s*%|%|ppm)/.test(u) || /w\/v|m\/v|\/K|\/°C|RH|IACS|\/a$/.test(u) || !/[a-z]/i.test(u.replace(/^in /, '').replace(/ppm/, ''))) return null;
+  if (/v\/v|V\/V|vol|volume|ppmv/i.test(u)) return 'VolumeFraction';
+  if (/mol|at\.?%/i.test(u)) return 'AmountOfSubstanceFraction';
+  if (/m\/m|w\/w|g\/g|mass|wt|Gew|weight|ppmw/i.test(u)) return 'MassFraction';
+  return null;
+};
 const add = (cat, unit, expect, extra = {}) => S.push({ cat, unit, expect, ...extra });
 
 // ── 1. SI base units with every prefix (Table A.1 p. 47, Table A.5 p. 53, R017/R018 p. 74)
@@ -67,7 +81,7 @@ add('2 Derived units and prefixes', 'nC', '\\nano\\coulomb', { cite: 'Table A.5 
 add('2 Derived units and prefixes', 'C', '', { why: 'coulomb or degree Celsius: the context must decide', cite: 'Table A.3 pp. 49–50' });
 add('2 Derived units and prefixes', 'C', '\\degreecelsius', { ctx: ['Melting temperature'], why: 'context is a temperature', cite: 'Table A.3 p. 50' });
 add('2 Derived units and prefixes', 'C', '\\coulomb', { ctx: ['Electric charge'], why: 'context is a charge', cite: 'Table A.3 p. 49' });
-add('2 Derived units and prefixes', 'rad', '', { ctx: ['Absorbed dose'], why: '"rad" in a dose is the old unit rad (0.01 Gy), not the radian', cite: 'Table A.3 p. 49' });
+add('2 Derived units and prefixes', 'rad', '\\gray', { ctx: ['Absorbed dose'], si: ['12.345e-2', '0.012e-2'], hybrid: 'rad', why: '"rad" in a dose is the old unit rad (0.01 Gy), not the radian: si:hybrid with Gy', cite: 'Table A.3 p. 49; NIST SP 811 (1 rad = 10⁻² Gy); D-SI guide Section 7 p. 33' });
 add('2 Derived units and prefixes', '°', '', { ctx: ['Temperature of the bath'], why: '"°" in a temperature: angle or °C?', cite: 'Table A.2 p. 48' });
 
 // ── 3. Units accepted with the SI (Table A.2 p. 48, Table A.4 p. 52; R017/R019 p. 74)
@@ -119,7 +133,7 @@ const COMPOUND = [
   ['V/V', '\\volt\\volt\\tothe{-1}'], ['mV/V', '\\milli\\volt\\volt\\tothe{-1}'], ['µV/V', '\\micro\\volt\\volt\\tothe{-1}'], ['µV/K', '\\micro\\volt\\kelvin\\tothe{-1}'],
   ['V/(m·s)', '\\volt\\metre\\tothe{-1}\\second\\tothe{-1}'], ['VA', '\\volt\\ampere'], ['V A', '\\volt\\ampere'], ['A/m', '\\ampere\\metre\\tothe{-1}'], ['A/m²', '\\ampere\\metre\\tothe{-2}'],
   ['C/kg', '\\coulomb\\kilogram\\tothe{-1}'], ['C/mol', '\\coulomb\\mole\\tothe{-1}'], ['C m', '\\coulomb\\metre'], ['A m²', '\\ampere\\metre\\tothe{2}'], ['Ω·m', '\\ohm\\metre'], ['Ω m', '\\ohm\\metre'],
-  ['Ω·cm', '\\ohm\\centi\\metre'], ['µΩ·cm', ''], ['S/m', '\\siemens\\metre\\tothe{-1}'], ['mS/cm', '\\milli\\siemens\\centi\\metre\\tothe{-1}'],
+  ['Ω·cm', '\\ohm\\centi\\metre'], ['µΩ·cm', '\\ohm\\metre', { exp: -8 }], ['S/m', '\\siemens\\metre\\tothe{-1}'], ['mS/cm', '\\milli\\siemens\\centi\\metre\\tothe{-1}'],
   ['µS/cm', '\\micro\\siemens\\centi\\metre\\tothe{-1}'], ['uS/cm', '\\micro\\siemens\\centi\\metre\\tothe{-1}'], ['S·m²/mol', '\\siemens\\metre\\tothe{2}\\mole\\tothe{-1}'],
   ['F/m', '\\farad\\metre\\tothe{-1}'], ['H/m', '\\henry\\metre\\tothe{-1}'], ['T·m', '\\tesla\\metre'], ['Wb/m²', '\\weber\\metre\\tothe{-2}'],
   ['cd/m²', '\\candela\\metre\\tothe{-2}'], ['cd/m2', '\\candela\\metre\\tothe{-2}'], ['lm/W', '\\lumen\\watt\\tothe{-1}'], ['lx·s', '\\lux\\second'], ['lm·s', '\\lumen\\second'],
@@ -147,7 +161,7 @@ const COMPOUND = [
   ['µg/kg/d', '\\micro\\gram\\kilogram\\tothe{-1}\\day\\tothe{-1}'], ['mg/L/h', '\\milli\\gram\\litre\\tothe{-1}\\hour\\tothe{-1}'], ['m/s/s', '\\metre\\second\\tothe{-2}'],
   ['mol kg-1', '\\mole\\kilogram\\tothe{-1}'], ['mol·kg⁻¹', '\\mole\\kilogram\\tothe{-1}'], ['μmol·kg⁻¹', '\\micro\\mole\\kilogram\\tothe{-1}'], ['nmol g-1', '\\nano\\mole\\gram\\tothe{-1}'],
 ];
-for (const [u, e] of COMPOUND) add('6 Compound units', u, e, { cite: 'Section 3 pp. 15–17; R015 p. 73' });
+for (const [u, e, extra] of COMPOUND) add('6 Compound units', u, e, { cite: 'Section 3 pp. 15–17; R015 p. 73', ...(extra || {}), ...(extra ? { why: 'two prefixes in the numerator cannot be one prefix (R015): units without prefixes, the powers of ten in the number' } : {}) });
 add('6 Compound units', 'µg/mg/kg', '', { why: 'two prefixes in the denominator cannot be merged into one without changing the value? (µg per mg per kg = ng/kg²·10^?)', cite: 'R015 p. 73', soft: true });
 
 // ── 7. Concentrations and fractions (Section 3; Tables A.3–A.5; D-SI 2.2.1 \percent, \ppm)
@@ -177,30 +191,50 @@ const CONC = [
   ['at.%', '\\percent'], ['at%', '\\percent'], ['%RH', '\\percent'], ['% RH', '\\percent'], ['%IACS', '\\percent'], ['% IACS', '\\percent'], ['%/K', '\\percent\\kelvin\\tothe{-1}'],
   ['%/a', ''],
   ['ppm', '\\ppm'], ['ppm (mol/mol)', '\\ppm'], ['ppm (m/m)', '\\ppm'], ['ppm v/v', '\\ppm'], ['ppmv', '\\ppm'], ['ppmw', '\\ppm'], ['ppm/K', '\\ppm\\kelvin\\tothe{-1}'],
-  ['ppm/°C', '\\ppm\\degreecelsius\\tothe{-1}'], ['% (w/v)', '\\gram\\deci\\litre\\tothe{-1}'], ['% w/v', '\\gram\\deci\\litre\\tothe{-1}'], ['% (m/v)', '\\gram\\deci\\litre\\tothe{-1}'],
-  ['%(w/v)', '\\gram\\deci\\litre\\tothe{-1}'], ['‰ (w/v)', '\\gram\\litre\\tothe{-1}'], ['ppm (w/v)', '\\milli\\gram\\litre\\tothe{-1}'], ['ppb (w/v)', '\\micro\\gram\\litre\\tothe{-1}'],
+  ['ppm/°C', '\\ppm\\degreecelsius\\tothe{-1}'], ['% (w/v)', '\\gram\\litre\\tothe{-1}', { exp: 1 }], ['% w/v', '\\gram\\litre\\tothe{-1}', { exp: 1 }], ['% (m/v)', '\\gram\\litre\\tothe{-1}', { exp: 1 }],
+  ['%(w/v)', '\\gram\\litre\\tothe{-1}', { exp: 1 }], ['‰ (w/v)', '\\gram\\litre\\tothe{-1}'], ['ppm (w/v)', '\\milli\\gram\\litre\\tothe{-1}'], ['ppb (w/v)', '\\micro\\gram\\litre\\tothe{-1}'],
   ['g/100 mL (w/v)', '\\gram\\deci\\litre\\tothe{-1}'], ['mg/L (w/v)', '\\milli\\gram\\litre\\tothe{-1}'],
 ];
-for (const [u, e] of CONC) add('7 Concentrations and fractions', u, e, { cite: u.includes('w/v') || u.includes('m/v') ? 'Ph. Eur. 1.2 (w/v = g per 100 mL); Table A.4 p. 52' : /%|ppm/.test(u) ? 'D-SI 2.2.1 unit list (\\percent, \\ppm); Section 3' : 'Section 3 pp. 15–17; R015 p. 73' });
+for (const [u, e, extra] of CONC) add('7 Concentrations and fractions', u, e, {
+  ...(extra || {}), ...(extra ? { why: '% (w/v) is a mass concentration, 1 % (w/v) = 10 g/L: g/L with the number times 10 (D-SI expert review: % is not a unit of a mass concentration)' } : {}),
+  ...(qudtOfText(u) ? { qudt: qudtOfText(u) } : {}),
+  cite: u.includes('w/v') || u.includes('m/v') ? 'Ph. Eur. 1.2 (w/v = g per 100 mL); Table A.4 p. 52' : /%|ppm/.test(u) ? 'D-SI 2.2.1 unit list (\\percent, \\ppm); Section 3' : 'Section 3 pp. 15–17; R015 p. 73' });
+// (a % or ppm whose text names the kind of fraction also gets si:quantityTypeQUDT; see qudtOfText)
 // ppb, ‰: no identifier; only with the stated kind of fraction
 const KIND = [
-  ['ppb', '', null], ['ppb', '\\micro\\gram\\kilogram\\tothe{-1}', 'Mass fraction of lead'], ['ppb', '\\nano\\mole\\mole\\tothe{-1}', 'Amount fraction of CO2 in nitrogen'],
+  ['ppb', '\\ppm', null], ['ppb', '\\micro\\gram\\kilogram\\tothe{-1}', 'Mass fraction of lead'], ['ppb', '\\nano\\mole\\mole\\tothe{-1}', 'Amount fraction of CO2 in nitrogen'],
   ['ppb', '\\nano\\litre\\litre\\tothe{-1}', 'Volume fraction'], ['ppb (m/m)', '\\micro\\gram\\kilogram\\tothe{-1}', null], ['ppb w/w', '\\micro\\gram\\kilogram\\tothe{-1}', null],
   ['ppb (mol/mol)', '\\nano\\mole\\mole\\tothe{-1}', null], ['ppbv', '\\nano\\litre\\litre\\tothe{-1}', null], ['ppbw', '\\micro\\gram\\kilogram\\tothe{-1}', null],
-  ['‰', '', null], ['‰', '\\gram\\kilogram\\tothe{-1}', 'mass fraction'], ['‰', '\\milli\\mole\\mole\\tothe{-1}', 'amount fraction'], ['‰', '\\milli\\litre\\litre\\tothe{-1}', 'volume fraction'],
-  ['‰ (m/m)', '\\gram\\kilogram\\tothe{-1}', null], ['‰', '', 'δ13C value vs VPDB'], ['ppb', '', 'Concentration of lead'],
+  ['‰', '\\one', null], ['‰', '\\gram\\kilogram\\tothe{-1}', 'mass fraction'], ['‰', '\\milli\\mole\\mole\\tothe{-1}', 'amount fraction'], ['‰', '\\milli\\litre\\litre\\tothe{-1}', 'volume fraction'],
+  ['‰ (m/m)', '\\gram\\kilogram\\tothe{-1}', null], ['‰', '\\one', 'δ13C value vs VPDB'], ['ppb', '\\ppm', 'Concentration of lead'],
+  ['‰ vs VPDB', '\\one', 'δ13C'], ['‰ (V-SMOW)', '\\one', 'δ18O of water'], ['‰', '\\one', 'δ¹⁵N vs AIR'], ['‰', '\\one', 'Delta 34S'],
 ];
-for (const [u, e, c] of KIND) add('8 ppb and ‰ (kind of fraction from the text)', u, e, { ...(c ? { ctx: [c] } : {}), why: e ? 'kind stated' : 'kind not stated: not converted', cite: 'Section 3; Table A.5 p. 53 (generator rule: only with the stated kind)' });
+for (const [u, e, c] of KIND) {
+  const delta = c && /δ|Delta/.test(c);
+  const unknown = !delta && /^(?:\\ppm|\\one)$/.test(e);
+  add('8 ppb and ‰ (kind of fraction from the text)', u, e, {
+    ...(c ? { ctx: [c] } : {}),
+    ...(delta ? { exp: -3, hybrid: '‰', label: { 'δ13C value vs VPDB': 'δ13CVPDB', 'δ13C': 'δ13CVPDB', 'δ18O of water': 'δ18OVSMOW', 'δ¹⁵N vs AIR': 'δ15NAIR', 'Delta 34S': 'δ34S' }[c] } : {}),
+    ...(unknown ? { exp: -3, hybrid: u } : {}),
+    why: delta ? 'isotope delta value: 10⁻³ \\one in si:hybrid with ‰, and si:label' : unknown ? 'kind not stated: si:hybrid with 10⁻³ \\ppm (ppb) or 10⁻³ \\one (‰) and the unit as printed, with a warning' : 'kind stated',
+    cite: delta || unknown ? 'D-SI guide Section 7 p. 33 (si:hybrid); D-SI expert review (e-3 \\ppm or e-3 \\one, label δ13CVPDB)' : 'Section 3; Table A.5 p. 53 (generator rule: only with the stated kind)',
+  });
+}
 
-// ── 9. Powers of ten written with the unit (absorbed into a prefix; the number stays as printed)
-const POW = [['× 10³ g/mol', '\\kilogram\\mole\\tothe{-1}'], ['x 10^3 g/mol', '\\kilogram\\mole\\tothe{-1}'], ['10^3 g/mol', '\\kilogram\\mole\\tothe{-1}'], ['×10^-3 m', '\\milli\\metre'],
-  ['10^-3 g', '\\milli\\gram'], ['10⁶ Bq', '\\mega\\becquerel'], ['× 10⁻⁶ m', '\\micro\\metre'], ['x10^6 Pa', '\\mega\\pascal'], ['10^-9 m', '\\nano\\metre'], ['× 10³ kg', '\\mega\\gram'],
-  ['10^3 L', '\\kilo\\litre'], ['× 10⁻⁶ K⁻¹', ''], ['10⁻⁶/K', ''], ['× 10⁻³', ''], ['10^3', ''], ['x 10^4 m', '']];
-for (const [u, e] of POW) add('9 Powers of ten with the unit', u, e, { why: e ? 'the power of ten becomes a prefix; the value is not multiplied' : 'no unit or no single prefix of that size: not converted', cite: 'Section 8 p. 40 (prefixes carry the exponential notation); Table A.5 p. 53' });
+// ── 9. Powers of ten written with the unit: written in the number as an exponent (D-SI expert review:
+// "closer to the certificate" and possible for any power, e.g. 5e-4 g); the digits stay as printed
+const POW = [['× 10³ g/mol', '\\gram\\mole\\tothe{-1}', 3], ['x 10^3 g/mol', '\\gram\\mole\\tothe{-1}', 3], ['10^3 g/mol', '\\gram\\mole\\tothe{-1}', 3], ['×10^-3 m', '\\metre', -3],
+  ['10^-3 g', '\\gram', -3], ['10⁶ Bq', '\\becquerel', 6], ['× 10⁻⁶ m', '\\metre', -6], ['x10^6 Pa', '\\pascal', 6], ['10^-9 m', '\\metre', -9], ['× 10³ kg', '\\kilogram', 3],
+  ['10^3 L', '\\litre', 3], ['× 10⁻⁶ K⁻¹', '\\kelvin\\tothe{-1}', -6], ['10⁻⁶/K', '\\kelvin\\tothe{-1}', -6], ['10-6/K', '\\kelvin\\tothe{-1}', -6], ['x10^-6 /K', '\\kelvin\\tothe{-1}', -6],
+  ['× 10⁻⁴ g', '\\gram', -4], ['x 10^4 m', '\\metre', 4], ['× 10⁻³', '', 0], ['10^3', '', 0]];
+for (const [u, e, n] of POW) add('9 Powers of ten with the unit', u, e, { ...(n ? { exp: n } : {}), why: e ? 'the power of ten is written in the number (exponent); the unit keeps its symbols' : 'no unit: not converted', cite: 'R003 p. 70 (a number may have an exponent); D-SI expert review' });
 
 // ── 10. CGS units that are exactly a D-SI expression (value unchanged)
-for (const [u, e] of [['cP', '\\milli\\pascal\\second'], ['P', '\\deci\\pascal\\second'], ['mP', ''], ['cSt', '\\milli\\metre\\tothe{2}\\second\\tothe{-1}'], ['St', '\\centi\\metre\\tothe{2}\\second\\tothe{-1}'], ['dyn', ''], ['erg', '']]) {
+for (const [u, e] of [['cP', '\\milli\\pascal\\second'], ['P', '\\deci\\pascal\\second'], ['mP', ''], ['cSt', '\\milli\\metre\\tothe{2}\\second\\tothe{-1}'], ['St', '\\centi\\metre\\tothe{2}\\second\\tothe{-1}']]) {
   add('10 CGS units', u, e, { why: e ? 'exactly a D-SI expression of the same size' : 'no D-SI identifier and no equal-size expression', cite: 'SI brochure 8th ed. Table 9; R020 p. 75' });
+}
+for (const [u, e, n] of [['dyn', '\\newton', -5], ['erg', '\\joule', -7], ['dyn/cm', '\\milli\\newton\\metre\\tothe{-1}', 0], ['Mx', '\\weber', -8]]) {
+  add('10 CGS units', u, e, { si: [n ? `12.345e${n}` : '12.345', n ? `0.012e${n}` : '0.012'], hybrid: u, ctx: u === 'dyn/cm' ? ['Surface tension'] : undefined, why: 'CGS unit, exactly a power of ten of an SI unit: si:hybrid, the power of ten in the number', cite: 'NIST SP 811 Appendix B; D-SI guide Section 7 p. 33' });
 }
 
 // ── 11. Notes in the unit text (basis, analyte, "as N"): not part of a unit, kept out of the D-SI unit
@@ -247,17 +281,17 @@ const NOT = [
   ['FNU', 'turbidity'], ['Hazen', 'colour scale'], ['Pt-Co', 'colour scale'], ['EBC', 'colour scale'], ['cfu/g', 'colony-forming unit'], ['CFU/mL', 'colony-forming unit'], ['PFU/mL', 'plaque-forming unit'],
   ['MPN/100 mL', 'most probable number'], ['copies/µL', 'count'], ['cells/mL', 'count'], ['particles/mL', 'count'], ['dpm', 'count rate'], ['dpm/g', 'count rate'], ['cpm', 'count rate'],
   ['cps', 'count rate'], ['counts/s', 'count rate'], ['mEq/L', 'equivalent'], ['meq/100 g', 'equivalent'], ['mOsm/kg', 'osmole'], ['mval/L', 'equivalent'],
-  ['lb', 'pound'], ['lbs', 'pound'], ['oz', 'ounce'], ['gr', 'grain'], ['ct', 'carat'], ['ft', 'foot'], ['in', 'inch'], ['inch', 'inch'], ['yd', 'yard'], ['mi', 'mile'], ['mil', 'mil'],
-  ['gal', 'gallon'], ['gpm', 'gallons per minute'], ['mpg', 'miles per gallon'], ['mph', 'miles per hour'], ['psi', 'pound per square inch'], ['psig', 'gauge psi'], ['atm', 'atmosphere'],
-  ['Torr', 'torr (not exactly mmHg)'], ['mTorr', 'torr'], ['inHg', 'inch of mercury'], ['mmH2O', 'water column'], ['kgf', 'kilogram-force'], ['kp', 'kilopond'], ['kgf/cm²', 'kilogram-force'],
-  ['lbf', 'pound-force'], ['BTU', 'British thermal unit'], ['cal', 'calorie'], ['kcal', 'kilocalorie'], ['kcal/mol', 'kilocalorie'], ['hp', 'horsepower'], ['PS', 'metric horsepower'],
-  ['°F', 'degree Fahrenheit'], ['°R', 'degree Rankine'], ['°Bx', 'degree Brix'], ['°Oe', 'degree Oechsle'], ['°dH', 'German hardness degree'], ['G', 'gauss'], ['Gs', 'gauss'], ['Oe', 'oersted'],
-  ['Mx', 'maxwell'], ['Gal', 'gal (acceleration)'], ['Ci', 'curie'], ['mCi', 'curie'], ['R', 'röntgen'], ['rem', 'rem'], ['Nm³/h', 'normal cubic metre'], ['Nm3', 'normal cubic metre'],
+  ['oz', 'ounce'], ['gr', 'grain'], ['ct', 'carat'], ['mil', 'mil'],
+  ['gal', 'gallon'], ['gpm', 'gallons per minute'], ['mpg', 'miles per gallon'], ['mph', 'miles per hour'], ['psig', 'gauge psi'],
+  ['inHg', 'inch of mercury'],
+  ['BTU', 'British thermal unit'], ['cal', 'calorie'], ['kcal', 'kilocalorie'], ['kcal/mol', 'kilocalorie'], ['hp', 'horsepower'], ['PS', 'metric horsepower'],
+  ['°Bx', 'degree Brix'], ['°Oe', 'degree Oechsle'], ['°dH', 'German hardness degree'], ['G', 'gauss, only in a magnetic quantity'], ['Gs', 'gauss, only in a magnetic quantity'],
+  ['Gal', 'gal (acceleration), only in an acceleration'], ['R', 'röntgen'], ['Nm³/h', 'normal cubic metre'], ['Nm3', 'normal cubic metre'],
   ['NL/min', 'normal litre'], ['sccm', 'standard cm³/min'], ['slm', 'standard L/min'], ['cc', 'cubic centimetre abbreviation'], ['CC', 'cubic centimetre abbreviation'], ['ppt', 'per thousand or per trillion?'],
   ['ppth', 'per thousand'], ['pph', 'per hundred'], ['year', 'year'], ['a', 'annum'], ['Bq/a', 'per annum'], ['month', 'month'], ['week', 'week'], ['lg', 'logarithm'], ['log', 'logarithm'],
   ['Kd', 'distribution coefficient symbol'], ['B', 'bel / byte / boron'], ['Hg', 'element symbol'], ['Cd', 'element symbol'], ['As', 'element symbol (ampere second is written A s)'],
   ['Mt', 'element symbol'], ['Mg', 'element symbol'], ['Tl', 'element symbol'], ['K-40', 'nuclide'], ['C-14', 'nuclide'], ['H-3', 'nuclide'], ['137Cs', 'nuclide'], ['dry mass', 'no unit'],
-  ['mm²/s (cSt)', ''], ['mg/kg (on dry basis, ×10⁻³)', 'a power of ten inside a comment'], ['% (v/m)', 'unclear kind of fraction'], ['% (m/m) (v/v)', 'two different kinds of fraction'],
+  ['mm²/s (cSt)', ''], ['mg/kg (on dry basis, ×10⁻³)', 'a power of ten inside a comment'], ['% (v/m)', 'unclear kind of fraction'], ['% (m/m) (v/v)', 'two different kinds of fraction']
 ];
 for (const [u, why] of NOT) {
   if (u === 'mm²/s (cSt)') { add('13 Not units of the SI / not readable in one way', u, '\\milli\\metre\\tothe{2}\\second\\tothe{-1}', { why: 'the bracket repeats the unit in CGS: it is a comment', cite: 'Section 3' }); continue; }
@@ -281,7 +315,7 @@ const TYPED = [
   ['\\milli\\decibel', 'R010'], ['\\kilo\\degreecelsius', 'R010'], ['\\micro\\mmhg', 'R010'], ['\\milli\\degree', 'Section 3'], ['\\one\\tothe{2}', 'R014'], ['\\metre\\tothe{1.5}', 'R013'],
   ['\\metre\\tothe{02}', 'R013'], ['\\metre\\tothe{2.0}', 'R013'], ['\\metre\\tothe', 'R013'], ['\\milli\\micro\\metre', 'R009'], ['\\metre\\tothe{2}\\tothe{3}', 'R009'], ['\\milli', 'R009'],
   ['\\tothe{2}', 'R009'], ['\\micro\\metre\\milli\\second', 'R015'], ['\\micro\\metre\\tothe{-1}\\milli\\second\\tothe{-1}', 'R015'], ['\\milli\\metre\\tothe{0}\\kilo\\metre', 'R015'],
-  ['\\Metre', 'R007'], ['\\metre \\second', 'R007'], ['\\meter', 'R008'], ['\\metres', 'R008'], ['\\milligram', 'R008'], ['\\metre{2}', 'R008'], ['metre', 'R008'], ['\\metre\\', 'R008'],
+  ['\\Metre', 'R007'], ['\\metre \\second', 'R007'], ['\\meter', 'R008'], ['\\metres', 'R008'], ['\\milligram', 'R008'], ['\\metre{2}', 'R008'], ['\\metre\\', 'R008'],
   ['\\percent\\tothe{2}', 'D-SI 2.2.1'], ['\\milli\\percent', 'D-SI 2.2.1'], ['\\kilo\\byte', 'D-SI 2.2.1'], ['\\kibi\\metre', 'D-SI 2.2.1'], ['\\metre\\per\\second\\per\\second', 'D-SI 2.2.1'],
   ['\\per\\second', 'D-SI 2.2.1'], ['\\metre\\per', 'D-SI 2.2.1'],
 ];
@@ -302,6 +336,68 @@ for (const [u, why] of [['Ω', 'Ohm sign Ω (U+2126)'], ['Ω', 'Greek capital om
 for (const [u, e] of [['bit', '\\bit'], ['byte', '\\byte'], ['KiB', '\\kibi\\byte'], ['MiB', '\\mebi\\byte'], ['GiB', '\\gibi\\byte'], ['Kibit', '\\kibi\\bit'], ['kbit', ''], ['kB', ''], ['MB', '']]) {
   add('17 Information units (D-SI 2.2.1)', u, e, { why: e ? 'binary prefix' : 'decimal prefixes are not allowed with bit and byte (and kB/MB are ambiguous)', cite: 'D-SI 2.2.1 unit list (binary prefixes)' });
 }
+
+// ── 18. Units outside the SI with a defined SI conversion: si:hybrid, first the SI value, then the value as
+// printed (D-SI guide Section 7 pp. 33–36; D-SI expert review). Factors: NIST SP 811, Appendix B (and the
+// D-SI guide p. 36 for °F); `si`: the SI value of 12.345 and of 0.012, from test/expect-hybrid.py.
+const HYBRID = [
+  ['lb', '\\kilogram', ['5.599598', '0.005443']], ['lbs', '\\kilogram', ['5.599598', '0.005443']], ['pounds', '\\kilogram', ['5.599598', '0.005443']],
+  ['ft', '\\metre', ['3.762756', '0.003658']], ['feet', '\\metre', ['3.762756', '0.003658']], ['in', '\\milli\\metre', ['313.5630', '0.3048']], ['inch', '\\milli\\metre', ['313.5630', '0.3048']],
+  ['yd', '\\metre', ['11.288268', '0.010973']], ['mi', '\\kilo\\metre', ['19.86735', '0.01931']], ['psi', '\\kilo\\pascal', ['85.11578', '0.08274']],
+  ['atm', '\\kilo\\pascal', ['1250.857', '1.216']], ['Torr', '\\pascal', ['1645.865', '1.600']], ['mTorr', '\\pascal', ['1.645865', '0.001600']],
+  ['kgf', '\\newton', ['121.06309', '0.11768']], ['kp', '\\newton', ['121.06309', '0.11768']], ['gf', '\\milli\\newton', ['121.06309', '0.11768']],
+  ['kgf/cm²', '\\kilo\\pascal', ['1210.6309', '1.1768']], ['kgf/mm²', '\\mega\\pascal', ['121.06309', '0.11768']], ['lbf', '\\newton', ['54.91330', '0.05338']],
+  ['mmH2O', '\\pascal', ['121.06309', '0.11768']], ['cmH2O', '\\pascal', ['1210.6309', '1.1768']], ['°F', '\\kelvin', ['262.230556', '0.006667']],
+  ['degrees Fahrenheit', '\\kelvin', ['262.230556', '0.006667']], ['°R', '\\kelvin', ['6.858333', '0.006667']],
+  ['Oe', '\\ampere\\metre\\tothe{-1}', ['982.3839', '0.9549']], ['kOe', '\\kilo\\ampere\\metre\\tothe{-1}', ['982.3839', '0.9549']],
+  ['Ci', '\\giga\\becquerel', ['456.7650', '0.4440']], ['mCi', '\\mega\\becquerel', ['456.7650', '0.4440']], ['µCi', '\\kilo\\becquerel', ['456.7650', '0.4440']],
+  ['nCi', '\\becquerel', ['456.7650', '0.4440']], ['pCi', '\\milli\\becquerel', ['456.7650', '0.4440']],
+];
+for (const [u, e, si] of HYBRID) add('18 Non-SI units in si:hybrid', u, e, { hybrid: u === 'pounds' || u === 'feet' || u === 'degrees Fahrenheit' ? { pounds: 'pounds', feet: 'feet', 'degrees Fahrenheit': '°F' }[u] : u, si, why: 'not a unit of the SI: si:hybrid with the SI value first', cite: 'D-SI guide Section 7 pp. 33–36; NIST SP 811 Appendix B' });
+for (const [u, e, n, c] of [['G', '\\tesla', -4, 'Magnetic flux density'], ['Gs', '\\tesla', -4, 'Remanence (magnetic induction)'], ['gauss', '\\tesla', -4, null], ['Gal', '\\metre\\second\\tothe{-2}', -2, 'Gravity acceleration'],
+  ['mGal', '\\metre\\second\\tothe{-2}', -5, 'Gravity anomaly (gravity)'], ['rem', '\\sievert', -2, null], ['mrem', '\\milli\\sievert', -2, null], ['mrad', '\\milli\\gray', -2, 'Absorbed dose']]) {
+  add('18 Non-SI units in si:hybrid', u, e, { si: [`12.345e${n}`, `0.012e${n}`], hybrid: u, ...(c ? { ctx: [c] } : {}), why: 'exactly a power of ten of an SI unit: si:hybrid, the power of ten in the number', cite: 'NIST SP 811 Appendix B; D-SI guide Section 7 p. 33' });
+}
+
+// ── 19. Unit names and the usual abbreviations, read as SI symbols (SI brochure 9th ed. 5.3; expert test cases "Ohm", "sec")
+const NAMES = [
+  ['Ohm', '\\ohm'], ['ohm', '\\ohm'], ['Ohms', '\\ohm'], ['kOhm', '\\kilo\\ohm'], ['MOhm', '\\mega\\ohm'], ['mOhm', '\\milli\\ohm'], ['kilohm', '\\kilo\\ohm'], ['megohm', '\\mega\\ohm'],
+  ['Ohm cm', '\\ohm\\centi\\metre'], ['Ohm-cm', '\\ohm\\centi\\metre'], ['ohm·m', '\\ohm\\metre'], ['Ohm m', '\\ohm\\metre'],
+  ['sec', '\\second'], ['secs', '\\second'], ['msec', '\\milli\\second'], ['µsec', '\\micro\\second'], ['usec', '\\micro\\second'], ['nsec', '\\nano\\second'],
+  ['seconds', '\\second'], ['minutes', '\\minute'], ['mins', '\\minute'], ['hours', '\\hour'], ['hr', '\\hour'], ['hrs', '\\hour'], ['days', '\\day'],
+  ['metre', '\\metre'], ['meters', '\\metre'], ['millimetre', '\\milli\\metre'], ['nanometers', '\\nano\\metre'], ['micron', '\\micro\\metre'], ['microns', '\\micro\\metre'],
+  ['gram', '\\gram'], ['grams', '\\gram'], ['milligram', '\\milli\\gram'], ['kilogram', '\\kilogram'], ['gm', '\\gram'], ['mcg', '\\micro\\gram'], ['mcg/kg', '\\micro\\gram\\kilogram\\tothe{-1}'],
+  ['litre', '\\litre'], ['liters', '\\litre'], ['millilitre', '\\milli\\litre'], ['ltr', '\\litre'], ['micrograms per litre', '\\micro\\gram\\litre\\tothe{-1}'],
+  ['mole', '\\mole'], ['mols', '\\mole'], ['millimoles', '\\milli\\mole'], ['Kelvin', '\\kelvin'], ['ampere', '\\ampere'], ['amps', '\\ampere'], ['volt', '\\volt'], ['kilovolt', '\\kilo\\volt'],
+  ['watt', '\\watt'], ['joules', '\\joule'], ['newton', '\\newton'], ['pascal', '\\pascal'], ['kilopascal', '\\kilo\\pascal'], ['hertz', '\\hertz'], ['megahertz', '\\mega\\hertz'],
+  ['siemens', '\\siemens'], ['tesla', '\\tesla'], ['coulomb', '\\coulomb'], ['becquerel', '\\becquerel'], ['gray', '\\gray'], ['sievert', '\\sievert'],
+  ['degC', '\\degreecelsius'], ['deg C', '\\degreecelsius'], ['degrees Celsius', '\\degreecelsius'], ['°Celsius', '\\degreecelsius'], ['°K', '\\kelvin'],
+  ['percent', '\\percent'], ['per cent', '\\percent'], ['parts per million', '\\ppm'], ['rpm', '\\minute\\tothe{-1}'], ['amu', '\\dalton'], ['lpm', '\\litre\\minute\\tothe{-1}'],
+  ['sq m', '\\metre\\tothe{2}'], ['square metres', '\\metre\\tothe{2}'], ['cubic metre', '\\metre\\tothe{3}'], ['mg per litre', '\\milli\\gram\\litre\\tothe{-1}'],
+];
+for (const [u, e] of NAMES) add('19 Unit names and abbreviations', u, e, { why: 'a unit name or a usual abbreviation, read as its SI symbol', cite: 'SI brochure 9th ed. 5.3 (unit names); Section 3' });
+
+// ── 20. Letters that must never be split into two wrong symbols (joined symbols are read only as N·m, W·h, A·h, Pa·s, V·A, Ω·m, or with an exponent)
+for (const [u, why] of [['Kg', 'kilogram written with a capital K (K is the kelvin), not kelvin gram'], ['KJ', 'capital K, not kelvin joule'], ['Kcal', 'capital K and calorie'],
+  ['kgs', 'plural of kg, not kilogram second'], ['mgs', 'not milligram second'], ['lt', 'not litre tonne'], ['gs', 'not gram second'], ['mLs', 'not millilitre second']]) {
+  add('20 No wrong splits', u, '', { why, cite: 'generator rule (no reading in two ways)' });
+}
+for (const [u, e] of [['Nm', '\\newton\\metre'], ['kWh', '\\kilo\\watt\\hour'], ['mAh', '\\milli\\ampere\\hour'], ['Pas', '\\pascal\\second'], ['mPas', '\\milli\\pascal\\second'],
+  ['Ws', '\\watt\\second'], ['VA', '\\volt\\ampere'], ['Ωcm', '\\ohm\\centi\\metre'], ['mgkg-1', '\\milli\\gram\\kilogram\\tothe{-1}'], ['kgm-3', '\\kilogram\\metre\\tothe{-3}']]) {
+  add('20 No wrong splits', u, e, { why: 'a product written together in practice, or a second symbol with an exponent', cite: 'Section 3 p. 15' });
+}
+
+// ── 21. emu: only the emu of magnetic moment (10⁻³ A·m²), only in a magnetic quantity (NIST, Units for Magnetic Properties)
+add('21 emu (CGS)', 'emu', '', { why: 'the size of an emu depends on the quantity', cite: 'NIST SP 811 Appendix B (emu of current, voltage …)' });
+add('21 emu (CGS)', 'EMU', '', { why: 'the size of an emu depends on the quantity', cite: 'NIST SP 811 Appendix B' });
+add('21 emu (CGS)', 'emu', '\\milli\\ampere\\metre\\tothe{2}', { ctx: ['Magnetic moment'], why: '1 emu = 10⁻³ A·m²', cite: 'NIST, Units for Magnetic Properties' });
+add('21 emu (CGS)', 'emu/g', '\\milli\\ampere\\metre\\tothe{2}\\gram\\tothe{-1}', { ctx: ['Mass magnetization'], why: '1 emu/g = 1 A·m²/kg', cite: 'NIST, Units for Magnetic Properties' });
+
+// ── 22. The kind of quantity in QUDT for %, ppm (D-SI expert review: recommended for ambiguous units)
+for (const [u, c, q] of [['%', 'Mass fraction of Fe', 'MassFraction'], ['%', 'Amount fraction of CO2', 'AmountOfSubstanceFraction'], ['ppm', 'Volume fraction', 'VolumeFraction'], ['%', null, null], ['ppm', 'Concentration', null]]) {
+  add('22 QUDT quantity kind', u, u === '%' ? '\\percent' : '\\ppm', { ...(c ? { ctx: [c] } : {}), ...(q ? { qudt: q } : {}), why: q ? 'the kind of fraction is stated: si:quantityTypeQUDT' : 'kind not stated: no QUDT', cite: 'D-SI 2.2.1 (si:quantityTypeQUDT); QUDT quantity kinds' });
+}
+add('15 D-SI strings typed in the form', 'metre', '\\metre', { rule: 'R008', why: 'as a unit text, the name of the metre; as a D-SI string it breaks R008', cite: 'R008 pp. 71–72; SI brochure 5.3' });
 
 module.exports = { SCENARIOS: S.filter(s => !s.soft) };
 if (require.main === module) console.log(S.length, 'scenarios');

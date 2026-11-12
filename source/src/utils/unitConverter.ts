@@ -3,16 +3,17 @@
 
 /**
  * Units from the certificate → D-SI units, by the rules in ./dsi.ts (D-SI guide v1.3, SmartCom,
- * DOI 10.5281/zenodo.3816686). A value is never changed: a unit is only written as a D-SI unit of
- * exactly the same size, and a unit without such a form is left as it is.
+ * DOI 10.5281/zenodo.3816686). The form keeps the value as printed. How it is written to the XML (a
+ * power of ten in the number, or si:hybrid for a unit outside the SI) is decided by unitWriting in
+ * ./dsi.ts when the XML is written.
  */
 
 import { toDecimalString } from './xmlValues';
-import { toDsi, UnitContext, DsiResult } from './dsi';
+import { toDsi, UnitContext, DsiResult, unitWriting, writtenValueText } from './dsi';
 
 export interface DsiConversion {
     dsiUnit: string;
-    /** Always 1: values are never scaled. Kept for the callers that multiply by it. */
+    /** Always 1: the value in the form is never scaled. Kept for the callers that multiply by it. */
     factor: 1;
 }
 
@@ -37,8 +38,9 @@ export const convertToDSI = (value: string | undefined | null | number, unit: st
 };
 
 /**
- * "4.9 g" → "4.9 \gram", "4,9 g" → "4.9 \gram", "5 ppm" → "5 \ppm": exactly what the XML generator
- * writes for a minimum sample size or item quantity. Empty when it is written as text.
+ * "4.9 g" → "4.9 \gram", "4,9 g" → "4.9 \gram", "5 ppm" → "5 \ppm", "2 lb" → si:hybrid with 0.907 \kilogram
+ * and 2 lb: what the XML generator writes for a minimum sample size or item quantity. Empty when it is
+ * written as text.
  */
 export const getDsiPreview = (raw: string): string => {
     const text = String(raw ?? '').trim();
@@ -46,6 +48,6 @@ export const getDsiPreview = (raw: string): string => {
     const match = text.match(/^(\S+)\s*(\S.*)$/);
     const num = match ? toDecimalString(match[1]) : null;
     const conv = match && num !== null ? resolveDsiUnit(match[2]) : null;
-    if (num === null || !conv) return "";
-    return `${num} ${conv.dsiUnit}`;
+    if (num === null || !conv || !match) return "";
+    return writtenValueText(num, conv.dsiUnit, unitWriting(match[2], conv.dsiUnit));
 };
