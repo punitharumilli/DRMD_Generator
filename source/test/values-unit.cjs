@@ -105,6 +105,29 @@ check('crafted form: review keys checked', f2.review.aiFilled.join() === 'abc' &
 check('another version or no form: not used', formFromState({ v: 1, form: {} }) === null && formFromState(null) === null && formFromState({ producers: [] }) === null);
 check('formOf: a document without review has none', !('review' in formOf({ ...doc, review: undefined })));
 
+// ---- values that only say "missing" (src/utils/absentValues.ts) ----
+const { isAbsentValue, withoutAbsentValues } = load('absentValues.ts');
+for (const t of ['N/A', 'n/a', 'N/a', 'n/A', 'NA', 'na', ' NA ', '-', '--', '–', '—', '?', 'none', 'None', 'nil', 'unknown',
+    'Not specified', 'not stated.', 'Information not available', 'Not given in the certificate', 'not found in the PDF']) {
+    check(`missing: "${t}" is emptied`, isAbsentValue(t));
+}
+for (const t of ['nA', 'Na', ' Na ', 'mA', 'Ag', 'K', 'Fe', 'NaCl', 'Na2O', 'nA/V', 'n.a.', 'Nano', 'nanoampere', 'sodium', 'not', 'A', '0', '-1', '- 5']) {
+    check(`real value: "${t}" is kept`, !isAbsentValue(t));
+}
+const answer = withoutAbsentValues({
+    properties: [{ name: 'Mass fraction', results: [{ name: 'Elements', quantities: [
+        { name: 'Na', value: '12.3', unit: 'mg/kg', uncertainty: 'N/A' },
+        { name: 'K', value: '4.5', unit: 'mg/kg', uncertainty: '-' },
+        { name: 'Current', value: '20', unit: 'nA', uncertainty: '0.5' },
+        { name: 'NA', value: '1', unit: 'n/a', uncertainty: 'not specified' }] }] }],
+    fieldCoordinates: { name: 'N/A' }, originalTexts: '{"unit":"n/a"}',
+});
+const q = answer.properties[0].results[0].quantities;
+check('answer: element Na and unit nA kept', q[0].name === 'Na' && q[2].unit === 'nA' && q[1].name === 'K');
+check('answer: N/A, -, NA, n/a and "not specified" emptied', q[0].uncertainty === '' && q[1].uncertainty === '' && q[3].name === '' && q[3].unit === '' && q[3].uncertainty === '');
+check('answer: numbers and units kept', q[0].value === '12.3' && q[0].unit === 'mg/kg' && q[3].value === '1');
+check('answer: PDF positions and printed texts untouched', answer.fieldCoordinates.name === 'N/A' && answer.originalTexts === '{"unit":"n/a"}');
+
 const failed = results.filter(r => !r[0]);
 console.log(`${results.length - failed.length}/${results.length} checks passed`);
 process.exit(failed.length ? 1 : 0);

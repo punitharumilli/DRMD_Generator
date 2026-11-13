@@ -15,6 +15,7 @@
  */
 import { validityStatements, checkPeriod, periodWords } from '../utils/periodCheck';
 import { countryNames } from '../utils/sourceForms';
+import { withoutAbsentValues } from '../utils/absentValues';
 import { DRMD, INITIAL_DRMD, INITIAL_PERSON, INITIAL_ID, ALLOWED_TITLES, Identifier } from '../types';
 import { decideRorIdDetailed, decideChemicalIdentifiersDetailed, convertUnitsWithAi, UnitQuestion } from './llmService';
 import { LlmConnection } from './providers';
@@ -56,23 +57,8 @@ const parseOriginalTexts = (raw: any): Record<string, string> | undefined => {
 // the moment the model answers. Identifier look-ups (ROR, CAS / InChIKey) are a separate step —
 // see resolveIdentifiers() below — which used to run inside this function and kept the form
 // blank until dozens of follow-up Gemini requests had finished.
-// ---- Information that is not in the PDF stays empty ----
-// A model sometimes writes "Not specified", "N/A" or "-" where the certificate says nothing. Such a
-// value is not information: it would end up in the XML and the HTML report as if the certificate said
-// it. So it is removed, and the field stays empty. An empty optional field is left out of the XML; an
-// empty mandatory one is reported by the validation, for the user to fill in.
-const ABSENT_VALUE = /^(?:n\/?a|none|nil|unknown|-+|–|—|\?|(?:information\s+)?not\s+(?:specified|stated|available|given|provided|found|mentioned|reported|indicated|listed|retrieved)(?:\s+in\s+the\s+(?:certificate|document|pdf))?\.?)$/i;
-const SKIP_KEYS = new Set(['fieldCoordinates', 'sectionCoordinates', 'originalTexts', 'coverageReasoning']);
-const withoutAbsentValues = (value: any): any => {
-    if (typeof value === 'string') return ABSENT_VALUE.test(value.trim()) ? '' : value;
-    if (Array.isArray(value)) return value.map(withoutAbsentValues);
-    if (value && typeof value === 'object') {
-        const out: any = {};
-        for (const [k, v] of Object.entries(value)) out[k] = SKIP_KEYS.has(k) ? v : withoutAbsentValues(v);
-        return out;
-    }
-    return value;
-};
+// Information that is not in the PDF stays empty: see withoutAbsentValues in ../utils/absentValues
+// ("N/A", "Not specified" and "-" are removed; "nA" and "Na" are real values and stay).
 
 // ---- Country of a US address ----
 // "Gaithersburg, MD 20899": a US state and a ZIP code show that the producer is in the United States,
