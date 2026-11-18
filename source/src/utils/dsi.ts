@@ -29,7 +29,7 @@
  * when it can be read in one way: an element symbol, a hardness scale or "dBm" is never taken for SI symbols.
  */
 
-import { shiftDecimal, convertDecimal } from './xmlValues';
+import { shiftDecimal, convertDecimal, convertUncertainty } from './xmlValues';
 
 // ─────────────────────────────── Sources and page numbers ───────────────────────────────
 
@@ -839,6 +839,15 @@ export const analyzeUnit = (raw: string): UnitAnalysis => {
     let unknownKind = false;
     const addKind = (k: RatioKind | undefined, text: string) => { if (k) kinds.push(k); else unknownKind = true; notes.push({ text: text.trim(), type: 'kind' }); };
 
+    // … without brackets right after a content unit ("mg/kg m/m", "g/kg w/w", "mg/L w/v"), separated by a
+    // space: the text before it is then a whole unit of mass, amount or volume per sample, so "m/m" cannot
+    // be metre per metre. A pair that stands alone ("V/V") or after another unit ("W/m") stays a unit.
+    s = s.replace(/(\S)\s+(m|w|g|v|V|mol|n)\s*\/\s*(m|w|g|v|V|mL|ml|mol|n)(?=\s|,|$)/g, (all, last, a, b, offset: number) => {
+        const before = s.slice(0, offset + 1).trim();
+        if (/(?:%|‰|ppm|ppb|ppt)$/.test(before) || !KIND_OF_PAIR(a, b) || !isContent(parseCore(before))) return all;
+        addKind(KIND_OF_PAIR(a, b), all.slice(last.length));
+        return `${last} `;
+    });
     // Kind of fraction: in brackets anywhere, "(m/m)" "(V/V)" "(w/v)" "(mol/mol)"
     s = s.replace(/[([]\s*(m|w|g|v|V|mol|n)\s*\/\s*(m|w|g|v|V|mL|ml|mol|n)\s*[)\]]/g, (all, a, b) => { addKind(KIND_OF_PAIR(a, b), all); return ' '; });
     // … without brackets only right after a ratio ("% m/m", "ppm v/v"): elsewhere "W/m" or "V/V" are units
@@ -1036,6 +1045,8 @@ export interface DsiResult {
     qudt?: string;
     /** ppb or ‰ without the kind of fraction: written in si:hybrid with \ppm or \one, with a warning. */
     kindUnknown?: boolean;
+    /** The unit is written with other unit symbols of exactly the same size (cP → mPa s, M → mol/L, emu → mA m², ppb of a stated kind → µg/kg): the sentence for the notice. */
+    changed?: string;
 }
 
 /** A unit outside the SI with a defined conversion into an SI unit (written in si:hybrid). */
@@ -1043,8 +1054,8 @@ export interface HybridDef {
     /** The D-SI unit of the first element of si:hybrid. */
     si: string;
     name: string;
-    /** SI value = value × num / den + offNum / offDen (exact integers as text) … */
-    num?: string; den?: string; offNum?: string; offDen?: string;
+    /** SI value = (value + pre) × num / den + post (num, den: exact integers; pre, post: exact decimals, as text) … */
+    num?: string; den?: string; pre?: string; post?: string;
     /** … or exactly value × 10^pow (the power of ten goes into the number). */
     pow?: number;
     /** How the unit is defined, with the source (shown in the notice). */
@@ -1057,6 +1068,8 @@ export interface HybridWriting {
     asWritten: string;
     /** The conversion; absent for ppb and ‰, whose SI value is the value with `valueExp` (10⁻³). */
     def?: HybridDef;
+    /** The quantity is a difference (a temperature difference): converted without the offset of the scale. */
+    difference?: boolean;
 }
 
 const KIND_UNITS: Record<RatioKind, { label: string }> = {
@@ -1138,7 +1151,7 @@ const HYBRID_LIST: Array<[string[], HybridDef]> = [
     [['lbf'], { si: '\\newton', name: 'pound-force', num: '44482216152605', den: '10000000000000', definition: `1 lbf = 4.448 221 615 260 5 N exactly, ${NIST811}` }],
     [['mmH2O'], { si: '\\pascal', name: 'conventional millimetre of water', num: '980665', den: '100000', definition: `1 mmH2O = 9.806 65 Pa exactly (conventional), ${NIST811}` }],
     [['cmH2O'], { si: '\\pascal', name: 'conventional centimetre of water', num: '980665', den: '10000', definition: `1 cmH2O = 98.0665 Pa exactly (conventional), ${NIST811}` }],
-    [['°F'], { si: '\\kelvin', name: 'degree Fahrenheit', num: '5', den: '9', offNum: '45967', offDen: '180', definition: 'T/K = (5/9) × t/°F + 45967/180, D-SI guide Section 7, p. 36' }],
+    [['°F'], { si: '\\kelvin', name: 'degree Fahrenheit', num: '5', den: '9', pre: '-32', post: '273.15', definition: 'T/K = (t/°F − 32) × 5/9 + 273.15 exactly, D-SI guide Section 7, p. 36' }],
     [['°R'], { si: '\\kelvin', name: 'degree Rankine', num: '5', den: '9', definition: `T/K = (5/9) × T/°R exactly, ${NIST811}` }],
     [['Oe', 'oersted', 'oersteds'], { si: '\\ampere\\metre\\tothe{-1}', name: 'oersted (CGS unit of magnetic field strength)', num: '7957747154594766788444188168626', den: `1${'0'.repeat(29)}`, definition: '1 Oe = 1000/(4π) A/m = 79.577 47 A/m, NIST, Units for Magnetic Properties' }],
     [['kOe'], { si: '\\kilo\\ampere\\metre\\tothe{-1}', name: 'kilo-oersted', num: '7957747154594766788444188168626', den: `1${'0'.repeat(29)}`, definition: '1 kOe = 1000/(4π) kA/m = 79.577 47 kA/m, NIST, Units for Magnetic Properties' }],
@@ -1179,17 +1192,29 @@ const hybridOf = (core: string, contextText: string): HybridDef | null => {
 /** The class of si:hybrid: that of its first (SI) element, but not better than gold (rule R054, D-SI guide p. 83). */
 const hybridClass = (cls: DsiClass): DsiClass => (DSI_CLASS_RANK[cls] < DSI_CLASS_RANK.gold ? 'gold' : cls);
 
-/** The value in the SI unit of si:hybrid (the uncertainty: `uncertainty` true, the factor only), or null. */
-export const hybridValue = (value: string, def: HybridDef, uncertainty = false): string | null => {
+/** Words that make a temperature a temperature difference, which is converted without the offset (1 °F = 5/9 K). */
+const DIFFERENCE_TEXT = /\b(?:differences?|intervals?|increase|decrease|rise|span|deviation|offset|spread)\b|Δ\s*[TtθϑΘ]|\bd[Tt]\b|\bdelta[\s-]*T\b/i;
+/** A conversion with an offset of the scale (°F): is the quantity a difference, by its description? */
+const isDifference = (def: HybridDef | undefined, contextText: string): boolean => !!(def && (def.pre || def.post) && DIFFERENCE_TEXT.test(contextText));
+
+/**
+ * The value in the SI unit of si:hybrid, or null. An exact power of ten goes into the number, so nothing
+ * is rounded. Other conversions keep the significant digits of the printed value (convertDecimal; the
+ * printed uncertainty tells whether zeros at the end of a whole number count); `uncertainty: true`
+ * converts an uncertainty instead: the factor only, rounded up to two significant digits
+ * (convertUncertainty). `difference`: without the offset of the scale.
+ */
+export const hybridValue = (value: string, def: HybridDef, opts: { uncertainty?: boolean; withUncertainty?: string | null; difference?: boolean } = {}): string | null => {
     if (def.pow !== undefined) return /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(String(value).trim()) ? shiftDecimal(value, def.pow) : null;
     if (!def.num || !def.den) return null;
-    return convertDecimal(value, BigInt(def.num), BigInt(def.den), BigInt(def.offNum ?? '0'), BigInt(def.offDen ?? '1'), uncertainty);
+    const c = { num: BigInt(def.num), den: BigInt(def.den), pre: def.pre, post: def.post };
+    return opts.uncertainty ? convertUncertainty(value, c) : convertDecimal(value, c, { uncertainty: opts.withUncertainty, difference: opts.difference });
 };
 
 const hybridSentence = (asWritten: string, def: HybridDef): string =>
     `"${asWritten}" (${def.name}) is not a unit of the SI, and D-SI has no identifier for it. It is written in si:hybrid (D-SI guide Section 7, p. 33; Figure 7.1, p. 34): `
-    + `first the value converted to ${def.si} (${def.definition})${def.pow !== undefined ? (def.pow ? ', with the power of ten in the number, so nothing is rounded' : '') : ', rounded two digits finer than the printed value'}, `
-    + `then the value exactly as printed with "${asWritten}". The uncertainty is converted with the same factor (p. 36). A hybrid is at best class Gold (rule R054, p. 83).`;
+    + `first the value converted to ${def.si} (${def.definition})${def.pow !== undefined ? (def.pow ? ', with the power of ten in the number, so nothing is rounded' : '') : ', rounded to the significant digits of the printed value'}, `
+    + `then the value exactly as printed with "${asWritten}". The uncertainty is converted with the same factor (p. 36)${def.pow !== undefined ? '' : ' and rounded up to two significant digits'}. A hybrid is at best class Gold (rule R054, p. 83).`;
 
 // ── Isotope delta values (δ13C in ‰ vs VPDB): numbers of dimension one ──
 
@@ -1365,9 +1390,11 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
     if (hy) {
         const c = checkDsi(hy.si);
         const asWritten = printedUnit(raw, a);
+        const difference = isDifference(hy, texts);
         return {
-            dsi: hy.si, cls: hybridClass(c.cls), notes: a.notes, page: GUIDE_PAGE['Figure 7.1'], hybrid: { asWritten, def: hy },
-            explanation: hybridSentence(asWritten, hy) + renamedSentence(raw, null) + notesSentence(a.notes),
+            dsi: hy.si, cls: hybridClass(c.cls), notes: a.notes, page: GUIDE_PAGE['Figure 7.1'], hybrid: { asWritten, def: hy, ...(difference ? { difference } : {}) },
+            explanation: hybridSentence(asWritten, hy) + (difference ? ' The quantity is a difference of temperatures, so it is converted without the offset of the scale (1 °F = 5/9 K).' : hy.pre || hy.post ? ' A temperature is converted with the offset of the scale; a temperature difference is converted without it, so name a difference as such in the quantity.' : '')
+                + renamedSentence(raw, null) + notesSentence(a.notes),
         };
     }
     if (a.notUnit) return { dsi: '', cls: 'improvable', noAi: true, notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: `${a.notUnit} It is written as typed (class Improvable, D-SI guide Section 8, p. 41).` };
@@ -1446,7 +1473,7 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
                 : `"${raw}" is a mass concentration: w/v means grams of substance per millilitre of solution (Ph. Eur. General Notices 1.2), so it is not the ratio ${ratioToken.def.dsi ? `\\${ratioToken.def.dsi}` : ratioToken.sym}. It is written ${dsi}, which has the same size, so the value is unchanged.`
             : `D-SI has no identifier for ${ratioToken.def.noDsi}; as a ${KIND_UNITS[kind].label} it is written ${dsi}, which has the same size, so the value is unchanged.`;
         return {
-            dsi, cls: c.cls, kind, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(r.valueExp ? { valueExp: r.valueExp } : {}),
+            dsi, cls: c.cls, kind, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(r.valueExp ? { valueExp: r.valueExp } : { changed: `"${ratioToken.sym}" has no D-SI identifier; as a ${KIND_UNITS[kind].label} it is written ${dsi}, which has exactly the same size, so the value is unchanged.` }),
             explanation: `${how}${r.valueExp ? valueExpSentence(r.valueExp, '').replace(/^ {2}/, ' ') : ''} ${explainDsi(c)}${notesSentence(a.notes.filter(n => n.type !== 'kind'))}`,
         };
     }
@@ -1502,8 +1529,12 @@ export const toDsi = (unitText: string, ctx?: UnitContext): DsiResult => {
     if (!check.ok) return { dsi: '', cls: 'improvable', notes: a.notes, page: GUIDE_PAGE.Improvable, explanation: check.reason };
     const valueExp = check.valueExp;
     const qudt = qudtFor(bare, dsi, a.kind ?? kindFromContext(raw, ctx));
+    const expanded = parsed.tokens.filter(t => t.def.expand).map(t => `"${t.sym}"${t.def.noDsi ? ` (${t.def.noDsi})` : ''}`);
+    const changed = equivNotes.length || expanded.length
+        ? `${[...expanded.map(e => `${e} has no D-SI identifier and is written as the units it stands for`), ...equivNotes].join('; ')}: the unit is written ${dsi}, which has exactly the same size, so the value is unchanged.`
+        : '';
     return {
-        dsi, cls: c.cls, ambiguous: ambiguous || undefined, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(valueExp ? { valueExp } : {}), ...(qudt ? { qudt } : {}),
+        dsi, cls: c.cls, ambiguous: ambiguous || undefined, notes: a.notes, page: DSI_CLASS_PAGE[c.cls], ...(valueExp ? { valueExp } : {}), ...(qudt ? { qudt } : {}), ...(changed ? { changed } : {}),
         explanation: explainDsi(c) + decided + renamedSentence(raw, parsed) + (equivNotes.length ? ` ${equivNotes.join('; ')}, so the value is unchanged.` : '')
             + (valueExp ? valueExpSentence(valueExp, moved
                 ? `"${raw}" has more prefixes than one in the numerator or the denominator, which D-SI does not allow (rule R015, p. 73) and which cannot be merged into one prefix, so the units are written without prefixes and their powers of ten (10^${valueExp} in all) are written in the number.`
@@ -1611,6 +1642,8 @@ export interface UnitWriting extends SameUnit {
     qudt?: string;
     /** ppb or ‰ without the kind of fraction (written in si:hybrid, with a warning). */
     kindUnknown?: boolean;
+    /** Written with other unit symbols of the same size (see DsiResult.changed). */
+    changed?: string;
     /** Quality class of what is written (a hybrid is at best gold, rule R054). */
     cls: DsiClass;
 }
@@ -1633,7 +1666,7 @@ export const unitWriting = (unitText: string, dsi: string, ctx?: UnitContext): U
         return {
             ok: true, reason: '', valueExp: rules.valueExp ?? 0, cls: rules.cls,
             ...(rules.hybrid ? { hybrid: rules.hybrid } : {}), ...(rules.label ? { label: rules.label } : {}),
-            ...(rules.qudt ? { qudt: rules.qudt } : {}), ...(rules.kindUnknown ? { kindUnknown: true } : {}),
+            ...(rules.qudt ? { qudt: rules.qudt } : {}), ...(rules.kindUnknown ? { kindUnknown: true } : {}), ...(rules.changed ? { changed: rules.changed } : {}),
         };
     }
     const texts = (ctx?.texts || []).map(t => String(t ?? ''));
@@ -1657,17 +1690,17 @@ export const unitWriting = (unitText: string, dsi: string, ctx?: UnitContext): U
     }
     const v = verifySameUnit(raw, d, undefined, { ambiguousAsUnit: true });
     if (!v.ok) return { ...v, cls: c.cls };
-    if (v.hybrid) return { ...v, cls: hybridClass(c.cls) };
+    if (v.hybrid) return { ...v, hybrid: { ...v.hybrid, ...(isDifference(v.hybrid.def, texts.join(' ')) ? { difference: true } : {}) }, cls: hybridClass(c.cls) };
     const qudt = qudtFor(a.core, d, kind);
     return { ...v, ...(qudt ? { qudt } : {}), cls: c.cls };
 };
 
 /** Values as the XML writes them, for the notices: "196.4e3 \gram\mole\tothe{-1}", or both elements of si:hybrid. */
-export const writtenValueText = (value: string, dsi: string, w: UnitWriting | null): string => {
+export const writtenValueText = (value: string, dsi: string, w: UnitWriting | null, uncertainty?: string | null): string => {
     const v = String(value ?? '').trim();
     if (!w || !w.ok) return `${v} ${dsi}`;
     if (w.hybrid) {
-        const si = w.hybrid.def ? hybridValue(v, w.hybrid.def) : shiftDecimal(v, w.valueExp);
+        const si = w.hybrid.def ? hybridValue(v, w.hybrid.def, { withUncertainty: uncertainty, difference: w.hybrid.difference }) : shiftDecimal(v, w.valueExp);
         return `si:hybrid with ${si ?? '?'} ${dsi} and ${v} ${w.hybrid.asWritten}`;
     }
     return `${shiftDecimal(v, w.valueExp)} ${dsi}`;

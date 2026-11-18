@@ -8,7 +8,7 @@ import {
 } from './types';
 import { extractStructuredDataFromPdf, clearQuotaMemory, ExtractionReport } from './services/llmService';
 import { mapExtractedToDrmd, resolveIdentifiers, applyIdentifierPatch, createInitialDrmd, generateUUID, lookUpRorAgain, lookUpChemicalAgain, lookUpChemicalsAgain, materialLookupContext, chemKey, refineUnitsWithAi, applyUnitPatch, needsUnitAi, unitContextTexts } from './services/extractionPipeline';
-import { generateDrmdXml } from './utils/xmlGenerator';
+import { generateDrmdXml, FORM_STATE_COMMENT } from './utils/xmlGenerator';
 import { convertToDSI, getDsiPreview, dsiFor } from './utils/unitConverter';
 import { checkDsi, explainDsi, verifySameUnit, parseHumanUnit, isKindDependent, issuesText, guidePageUrl, DsiClass, DSI_CLASS_LABEL, DSI_CLASS_MEANING, DSI_CLASS_PAGE, unitWriting, writtenValueText, UnitWriting } from './utils/dsi';
 import { readDrmdXml } from './utils/drmdFile';
@@ -180,6 +180,7 @@ const generateHtmlReport = (data: DRMD) => {
         </table>
     ` : '';
 
+    // The footer below starts with OWN_FILE_MARK.html, by which a folder run knows its own reports.
     return `
     <!DOCTYPE html>
     <html lang="en">
@@ -571,6 +572,9 @@ interface VerifyApi {
     setChecked: (value: unknown, checked: boolean) => void;
 }
 const VerifyContext = React.createContext<VerifyApi>({ status: () => null, setChecked: () => {} });
+
+/** A warning of the official business rules (DRMD-, RMC-, PIS-nnn), as opposed to a note of the generator. */
+const isRuleWarning = (w: { ruleId: string }) => /^(?:DRMD|RMC|PIS)-\d{3}$/.test(w.ruleId);
 
 /**
  * Links between the form and the PDF. `hasPdf`: a PDF is shown, so "Show in the PDF" can mark a value
@@ -1137,19 +1141,61 @@ type PendingUpload =
     | { kind: 'pdf'; file: File; previewUrl: string; restore: PaneRestore }
     | { kind: 'bulk'; picked: PickedPdf[]; folderName: string | null; label: string; restore: PaneRestore };
 
+/** Files this tab has written, per folder. They are the generator's own and may be written again. */
+const writtenInThisTab = new WeakMap<FileSystemDirectoryHandle, Set<string>>();
+
+/** Text by which the generator knows its own files: the comment of each XML, the footer of each HTML report. */
+const OWN_FILE_MARK = { xml: FORM_STATE_COMMENT, html: 'Generated with the DRMD AI Generator' };
+
+/**
+ * True when the folder has no file of this name, or when the file is one the generator wrote (this tab,
+ * or an earlier run: recognised by OWN_FILE_MARK). Any other file is the user's own and is kept.
+ */
+const mayWriteFile = async (dir: FileSystemDirectoryHandle, name: string): Promise<boolean> => {
+    if (writtenInThisTab.get(dir)?.has(name)) return true;
+    let file: File;
+    try {
+        file = await (await dir.getFileHandle(name)).getFile();
+    } catch (err) {
+        // Not there: free. Anything else (for example a subfolder of that name): not free.
+        return (err as any)?.name === 'NotFoundError';
+    }
+    if (file.size > 64 * 1024 * 1024) return false;
+    return (await file.text()).includes(name.endsWith('.xml') ? OWN_FILE_MARK.xml : OWN_FILE_MARK.html);
+};
+
+/**
+ * The name a result is saved under: "<pdf name>.xml" and "<pdf name>.html"; when a file of the user's
+ * own already has that name, "<pdf name>.drmd.xml" (then ".drmd-2.xml", ".drmd-3.xml", and so on).
+ */
+const resultFileName = async (dir: FileSystemDirectoryHandle, base: string, ext: 'xml' | 'html'): Promise<string> => {
+    for (let n = 1; n <= 99; n++) {
+        const name = n === 1 ? `${base}.${ext}` : n === 2 ? `${base}.drmd.${ext}` : `${base}.drmd-${n - 1}.${ext}`;
+        if (await mayWriteFile(dir, name)) return name;
+    }
+    throw new Error(`There is no free name for the ${ext.toUpperCase()} file of ${base} in this folder.`);
+};
+
 const writeTextFile = async (dir: FileSystemDirectoryHandle, name: string, text: string) => {
     const handle = await dir.getFileHandle(name, { create: true });
     const writable = await (handle as any).createWritable();
     await writable.write(new Blob([text], { type: name.endsWith('.xml') ? 'application/xml' : 'text/html' }));
     await writable.close();
+    let written = writtenInThisTab.get(dir);
+    if (!written) writtenInThisTab.set(dir, written = new Set());
+    written.add(name);
 };
 
-/** Writes "<pdf name>.xml" and "<pdf name>.html" next to the PDF; returns the XML's name. */
+/**
+ * Writes the XML and the HTML report next to the PDF (names: see resultFileName) and returns the
+ * XML's name. Files of the user's own are never replaced.
+ */
 const saveResultFiles = async (dir: FileSystemDirectoryHandle, pdfName: string, doc: DRMD, xml?: string): Promise<string> => {
     const base = outputBaseName(pdfName);
-    await writeTextFile(dir, `${base}.xml`, xml ?? generateDrmdXml(doc));
-    await writeTextFile(dir, `${base}.html`, generateHtmlReport(doc));
-    return `${base}.xml`;
+    const xmlName = await resultFileName(dir, base, 'xml');
+    await writeTextFile(dir, xmlName, xml ?? generateDrmdXml(doc));
+    await writeTextFile(dir, await resultFileName(dir, base, 'html'), generateHtmlReport(doc));
+    return xmlName;
 };
 
 /**
@@ -1972,7 +2018,7 @@ const App: React.FC = () => {
               // The rules' own explanation, when they wrote this unit (it names notes such as "dry mass")
               const rules = unit ? dsiFor(unit, ctx) : null;
               const why = rules && rules.dsi === dsi ? rules.explanation : explainDsi(c);
-              const valueText = valueInXml(value, dsi, unitWriting(unit || '\\one', dsi, ctx));
+              const valueText = valueInXml(value, dsi, unitWriting(unit || '\\one', dsi, ctx), String(q.uncertainty ?? ''));
               text = `Converted for the XML: the unit ${shownUnit} marked here is written in D-SI as ${dsi}, ${how}. ${why}${valueText}`
                   + (mismatch ? ` Note: ${dsi} is not the same size as "${unit}"; check it.` : '');
               conversion = {
@@ -3111,11 +3157,12 @@ const App: React.FC = () => {
               <dl className="grid grid-cols-[minmax(0,150px)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm max-w-[80ch]">
                   <dt className="text-ink-muted">Validation</dt>
                   <dd>
-                      Every change is checked at once against the DRMD 1.0.0 XML schema and the official business rules (Schematron).
+                      Every change is checked at once against the official DRMD 1.0.0 business rules (Schematron) and against what the DRMD 1.0.0 XML schema requires of each value.
                       The bar at the bottom of the window shows the result. Validate &amp; export lists each finding:
                       <span className="font-medium"> Error</span> (must be corrected before the DRMD is valid),
-                      <span className="font-medium"> Conditional</span> (a rule that applies only in some cases) and
-                      <span className="font-medium"> Note</span> (a hint).
+                      <span className="font-medium"> Conditional</span> (a rule that applies only in some cases),
+                      <span className="font-medium"> Warning</span> (a recommendation of ISO 33401 that is not met) and
+                      <span className="font-medium"> Note</span> (a hint of the generator).
                   </dd>
                   <dt className="text-ink-muted">AI conversion</dt>
                   <dd>
@@ -3151,12 +3198,12 @@ const App: React.FC = () => {
                   <dt className="text-ink-muted">Sends data to</dt>
                   <dd>
                       Only when you use the AI or a look-up: the AI provider chosen in AI settings (the certificate PDF, for extraction; {providerLabel} at the moment),
-                      PubChem and CAS Common Chemistry (substance names, for CAS / InChIKey), ROR (producer names). A DRMD entered by hand or opened from a file is not sent anywhere.
+                      PubChem (substance names, for CAS / InChIKey), ROR (producer names). A DRMD entered by hand or opened from a file is not sent anywhere.
                   </dd>
                   <dt className="text-ink-muted">Amber fields</dt>
                   <dd>Values the AI filled in that do not appear word for word in the PDF. Compare each with the certificate (the locate button marks where it came from), then mark it as verified. Editing a value also counts as verified. Values you enter yourself are never marked.</dd>
                   <dt className="text-ink-muted">Output</dt>
-                  <dd>DRMD 1.0.0 XML, checked against the schema and the official business rules, and an HTML report.</dd>
+                  <dd>DRMD 1.0.0 XML, checked against the official business rules and written as the schema requires, and an HTML report.</dd>
                   <dt className="text-ink-muted">Version</dt>
                   <dd className="tabular-nums">{__APP_VERSION__}</dd>
                   <dt className="text-ink-muted">Licence</dt>
@@ -3975,7 +4022,10 @@ const App: React.FC = () => {
   };
 
   const renderValidateExport = () => {
-    const { errors, conditionalErrors, warnings, isCompliant: isValid } = validateDrmd(drmdData);
+    const { errors, conditionalErrors, warnings: allWarnings, isCompliant: isValid } = validateDrmd(drmdData);
+    // Warnings of the official rules (a SHOULD of ISO 33401 not met) and notes of the generator (hints)
+    const warnings = allWarnings.filter(isRuleWarning);
+    const notes = allWarnings.filter(w => !isRuleWarning(w));
     // The XML and the HTML report are built for viewing only while their panel is open.
     const xmlPreview = xmlOpen ? generateDrmdXml(drmdData) : '';
     const htmlPreview = htmlOpen ? generateHtmlReport(drmdData) : '';
@@ -4007,10 +4057,10 @@ const App: React.FC = () => {
     const isBlankDoc = drmdData === blankDocRef.current;
     // Findings of the schema and the business rules. A conditional rule has its own colour: amber
     // is kept for the values of the AI conversion that need verifying.
-    const severityRow = (kind: 'error' | 'conditional' | 'note', item: { ruleId: string; section: string; message: string }, key: string) => (
+    const severityRow = (kind: 'error' | 'conditional' | 'warning' | 'note', item: { ruleId: string; section: string; message: string }, key: string) => (
         <li key={key} className="grid grid-cols-[84px_1fr] gap-3 px-4 py-2.5" data-severity={kind}>
             <span className={kind === 'error' ? 'tag-bad justify-center' : kind === 'conditional' ? 'tag-cond justify-center' : 'tag-neutral justify-center'}>
-                {kind === 'error' ? 'Error' : kind === 'conditional' ? 'Conditional' : 'Note'}
+                {kind === 'error' ? 'Error' : kind === 'conditional' ? 'Conditional' : kind === 'warning' ? 'Warning' : 'Note'}
             </span>
             <div className="min-w-0">
                 <p className="text-sm text-ink">{italicK(item.message)}</p>
@@ -4256,7 +4306,7 @@ const App: React.FC = () => {
                 <div className="panel overflow-hidden" data-testid="validation-report">
                     <div className="panel-head">
                         <span className="inline-flex items-center gap-2"><Icon name="file" size={15} className="text-ink-muted" /> XML: schema and business rules</span>
-                        <span className="text-xs font-normal text-ink-muted tabular-nums">{errors.length} error{errors.length === 1 ? '' : 's'} · {conditionalErrors.length} conditional · {warnings.length} note{warnings.length === 1 ? '' : 's'}</span>
+                        <span className="text-xs font-normal text-ink-muted tabular-nums">{errors.length} error{errors.length === 1 ? '' : 's'} · {conditionalErrors.length} conditional · {warnings.length} warning{warnings.length === 1 ? '' : 's'} · {notes.length} note{notes.length === 1 ? '' : 's'}</span>
                     </div>
                     <div className={`px-4 py-3.5 flex items-center gap-x-4 gap-y-3 border-b ${isValid ? 'border-ok-line bg-ok-bg' : 'border-bad-line bg-bad-bg'}`}>
                         <span className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-full ${isValid ? 'bg-ok text-white' : 'bg-bad text-white'}`}>
@@ -4264,27 +4314,28 @@ const App: React.FC = () => {
                         </span>
                         <div className="flex-1 min-w-0">
                             <p className="text-md font-semibold text-ink">
-                                {isValid ? 'Valid: ready to export' : `${errors.length} error${errors.length === 1 ? '' : 's'} to fix before export`}
+                                {isValid ? 'No errors: ready to export' : `${errors.length} error${errors.length === 1 ? '' : 's'} to fix before export`}
                             </p>
                             <p className="text-sm text-ink-soft">
                                 {isValid
-                                    ? 'The XML meets the DRMD 1.0.0 schema and the official business rules.'
+                                    ? 'The XML meets the official DRMD 1.0.0 business rules, and the generator found nothing it could not write as the DRMD 1.0.0 schema requires. The page does not check the file against the XSD itself; the schema repository has a validator for that.'
                                     : 'The XML would not meet the DRMD 1.0.0 schema or the official business rules. The list below says where.'}
                                 {conditionalErrors.length > 0 && ` ${conditionalErrors.length} conditional rule${conditionalErrors.length === 1 ? '' : 's'}: check whether ${conditionalErrors.length === 1 ? 'it applies' : 'they apply'} to this certificate.`}
                             </p>
                         </div>
                     </div>
-                    {errors.length === 0 && conditionalErrors.length === 0 && warnings.length === 0 ? (
+                    {errors.length === 0 && conditionalErrors.length === 0 && allWarnings.length === 0 ? (
                         <p className="px-4 py-6 text-sm text-ink-muted">No findings.</p>
                     ) : (
                         <ul className="divide-y divide-line-soft max-h-[420px] overflow-y-auto relative">
                             {errors.map((err, idx) => severityRow('error', err, `err-${idx}`))}
                             {conditionalErrors.map((err, idx) => severityRow('conditional', err, `cerr-${idx}`))}
-                            {warnings.map((warn, idx) => severityRow('note', warn, `warn-${idx}`))}
+                            {warnings.map((warn, idx) => severityRow('warning', warn, `warn-${idx}`))}
+                            {notes.map((n, idx) => severityRow('note', n, `note-${idx}`))}
                         </ul>
                     )}
                     <p className="px-4 py-2 border-t border-line-soft hint">
-                        <span className="font-medium text-ink-soft">Error</span>: must be corrected for a valid file. <span className="font-medium text-cond">Conditional</span>: a rule that applies only if the certificate covers that case. <span className="font-medium text-ink-soft">Note</span>: a hint.
+                        <span className="font-medium text-ink-soft">Error</span>: must be corrected for a valid file. <span className="font-medium text-cond">Conditional</span>: a rule that applies only if the certificate covers that case. <span className="font-medium text-ink-soft">Warning</span>: a recommendation of ISO 33401 that is not met. <span className="font-medium text-ink-soft">Note</span>: a hint of the generator.
                     </p>
                 </div>
 
@@ -4380,6 +4431,8 @@ const App: React.FC = () => {
   // Live conformity summary for the status bar and the tab badge. Deferred so typing stays smooth.
   const deferredDoc = useDeferredValue(drmdData);
   const liveReport = useMemo(() => validateDrmd(deferredDoc), [deferredDoc]);
+  const liveWarnings = liveReport.warnings.filter(isRuleWarning).length;
+  const liveNotes = liveReport.warnings.length - liveWarnings;
   const reviewList = bulkResults.filter(r => r.status === 'done');
   const reviewIndex = reviewingBulkId ? reviewList.findIndex(r => r.id === reviewingBulkId) : -1;
   const openReviewAt = (i: number) => { const r = reviewList[i]; if (r) handleBulkReview(r); };
@@ -4806,10 +4859,11 @@ const App: React.FC = () => {
           ) : liveReport.errors.length > 0 ? (
             <><span className="dot bg-bad" /><span className="text-ink">{liveReport.errors.length} error{liveReport.errors.length === 1 ? '' : 's'}</span></>
           ) : (
-            <><span className="dot bg-ok" /><span className="text-ink">Valid DRMD 1.0.0</span></>
+            <><span className="dot bg-ok" /><span className="text-ink">No errors (DRMD 1.0.0 rules)</span></>
           )}
           {!isBlank && liveReport.conditionalErrors.length > 0 && <span>· {liveReport.conditionalErrors.length} conditional</span>}
-          {!isBlank && liveReport.warnings.length > 0 && <span>· {liveReport.warnings.length} note{liveReport.warnings.length === 1 ? '' : 's'}</span>}
+          {!isBlank && liveWarnings > 0 && <span>· {liveWarnings} warning{liveWarnings === 1 ? '' : 's'}</span>}
+          {!isBlank && liveNotes > 0 && <span>· {liveNotes} note{liveNotes === 1 ? '' : 's'}</span>}
         </button>
         {bulkResults.length > 0 && (
           <span className="inline-flex items-center gap-1.5">
@@ -4858,7 +4912,7 @@ const FolderIntroDialog: React.FC<{ onCancel: () => void; onChoose: () => void }
                         <li className="flex gap-2.5"><Icon name="folder" className="text-petrol-600 mt-0.5 shrink-0" />
                             <span>Choose the folder that holds the certificate PDFs. PDFs in its subfolders are included.</span></li>
                         <li className="flex gap-2.5"><Icon name="file" className="text-petrol-600 mt-0.5 shrink-0" />
-                            <span>The extracted <span className="font-medium text-ink">DRMD XML</span> and <span className="font-medium text-ink">HTML</span> files are automatically exported to the same folder. Your PDFs remain unchanged.</span></li>
+                            <span>The extracted <span className="font-medium text-ink">DRMD XML</span> and <span className="font-medium text-ink">HTML</span> files are automatically exported to the same folder. Your PDFs remain unchanged, and so do files of your own: if one already has the name, the result is saved as <span className="font-medium text-ink">name.drmd.xml</span> or <span className="font-medium text-ink">name.drmd.html</span>.</span></li>
                         <li className="flex gap-2.5"><Icon name="refresh" className="text-petrol-600 mt-0.5 shrink-0" />
                             <span>Each PDF extraction is automatically saved as it is ready. Should the extraction process halt unexpectedly, simply restart by uploading the same folder again. This is safe, as documents that have already been extracted are skipped.</span></li>
                     </ul>
@@ -4906,7 +4960,7 @@ const DroppedFolderDialog: React.FC<{
                     </p>
                     <ul className="mt-3 space-y-2.5 text-sm text-ink-soft">
                         <li className="flex gap-2.5"><Icon name="folder" className="text-petrol-600 mt-0.5 shrink-0" />
-                            <span><span className="font-medium text-ink">Save into the folder:</span> the extracted DRMD XML and HTML files are automatically exported to the same folder. Your PDFs remain unchanged. The browser asks <span className="font-medium">“Allow this site to edit files?”</span>; choose <span className="font-semibold">Allow</span>.</span></li>
+                            <span><span className="font-medium text-ink">Save into the folder:</span> the extracted DRMD XML and HTML files are automatically exported to the same folder. Your PDFs remain unchanged, and so do files of your own: if one already has the name, the result is saved as name.drmd.xml or name.drmd.html. The browser asks <span className="font-medium">“Allow this site to edit files?”</span>; choose <span className="font-semibold">Allow</span>.</span></li>
                         <li className="flex gap-2.5"><Icon name="file" className="text-petrol-600 mt-0.5 shrink-0" />
                             <span><span className="font-medium text-ink">Keep results in this tab:</span> nothing is written to the folder; the results can be downloaded as a ZIP.</span></li>
                     </ul>
@@ -5055,7 +5109,7 @@ const ProviderCard: React.FC<{
                 <button onClick={onCheck} disabled={!apiKey || check?.busy || locked} className="btn-secondary shrink-0" title={`Ask ${p.company} whether the key works and which of its models can read the certificates`}>
                     {check?.busy ? <Spinner size={12} /> : <Icon name="check" size={14} />} Check key
                 </button>
-                {apiKey && <button onClick={() => onKey('')} disabled={locked} className="btn-quiet shrink-0" title="Remove the key from this tab">Clear</button>}
+                {apiKey && <button onClick={() => onKey('')} disabled={locked} className="btn-quiet shrink-0" title="Remove the key from the field; it is no longer used. Closing or reloading the tab also clears it from the memory of the tab.">Clear</button>}
             </div>
             <p className={`hint mt-1.5 ${statusTone}`} role="status">
                 {check?.busy ? `Asking ${p.company}…`
@@ -5379,11 +5433,11 @@ const TextArea: React.FC<{ label: string; value: string; onChange: (v: string) =
 };
 
 /** The value as the XML writes it with its D-SI unit, for the notice ("" without a value). */
-const valueInXml = (value: string, dsi: string, w: UnitWriting): string => {
+const valueInXml = (value: string, dsi: string, w: UnitWriting, uncertainty?: string): string => {
     const num = toDecimalString(value);
     if (!value) return '';
     if (num === null || !w.ok) return ` The value ${value} is written as it is.`;
-    if (w.hybrid) return ` In the XML the value is written in ${writtenValueText(num, dsi, w)} (as printed).${w.label ? ` si:label: ${w.label}.` : ''}`;
+    if (w.hybrid) return ` In the XML the value is written in ${writtenValueText(num, dsi, w, toUncertaintyString(uncertainty))} (as printed).${w.label ? ` si:label: ${w.label}.` : ''}`;
     if (w.valueExp) return ` In the XML the value is written ${writtenValueText(num, dsi, w)}: the power of ten is in the number, and the digits stay as printed.`;
     return ` The value ${value} stays exactly as it is.${w.qudt ? ` The kind of quantity is also written: ${w.qudt} (si:quantityTypeQUDT).` : ''}`;
 };

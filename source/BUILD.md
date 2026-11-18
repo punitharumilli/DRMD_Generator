@@ -47,7 +47,7 @@ npm run test:dsi
 - `test/dsi-matrix.cjs`: runs every scenario through the generator's own code (rule engine and XML), plus number reading, the check of AI answers and speed. Writes `test/out-matrix/matrix.json`.
 - `test/dsi-xcheck.py` with `test/dsi_reference.py`: a second implementation of the D-SI rules, written separately from the generator code, judges more than 120,000 generated D-SI strings; the generator must agree on every one. Needs Python 3.
 - `test/dsi-unit.cjs`, `test/rpm-unit.cjs`: shorter checks of the rule engine (with the exact decimal arithmetic) and of the requests-per-minute tracker.
-- `test/expect-hybrid.py`: computes the SI values of `si:hybrid` that the scenarios expect, separately from the generator code, from the unit definitions (Python `decimal`). Needs Python 3.
+- `test/expect-hybrid.py`: computes the SI values of `si:hybrid` that the scenarios expect, separately from the generator code, from the unit definitions (Python `decimal`): the converted value keeps the significant digits of the printed value, a temperature in °F is converted as (t − 32) × 5/9 + 273.15, and the uncertainty is rounded up to two significant digits. Needs Python 3.
 
 Run them after every change to `dsi.ts`, `xmlValues.ts` or `xmlGenerator.ts`. When a rule of the D-SI changes, change the scenario's expected unit first (with its source), then the code.
 
@@ -58,6 +58,30 @@ npm run test:values
 ```
 
 `test/source-unit.cjs` checks how the period of validity is read and where values come from in the PDF (the passage, the words that differ, a value not found, a UUID created by the generator). `test/values-unit.cjs` checks which values count as converted for machine readability (and which do not), which answers of the model count as a missing value ("N/A", "-", but not "nA" or "Na"), that the saved form gives exactly the same XML and the same validation findings again, and that a crafted comment cannot add fields, prototypes or links that are not web addresses. Run them after every change to `absentValues.ts`, `valueCheck.ts`, `sourceExplain.ts`, `periodCheck.ts`, `formState.ts`, `drmdFile.ts` or `xmlGenerator.ts`.
+
+## Test of API keys in error texts
+
+```
+npm run test:keys
+```
+
+`test/keys-unit.cjs` checks that an API key, and masked forms of it, are removed from error texts before they are shown or logged, also from the message and the stack of an error thrown by Google's SDK. Run it after every change to the error handling in `providers.ts` or `llmService.ts`.
+
+## Test of the chemical identifiers
+
+```
+npm run test:ids
+```
+
+`test/cas-unit.cjs` checks which CAS Registry Number is written for a substance: only one of the candidates that PubChem and the element table give, each with a valid check digit. With one candidate no model is asked; with several the model chooses one of them (the first is taken if it gives no valid choice); with none no CAS number is written. The InChIKey and the PubChem CID are always those of PubChem. Run it after every change to `decideChemicalIdentifiersDetailed` in `llmService.ts` or to `chemicalIdentifierService.ts`.
+
+## Test of the embedded business rules
+
+```
+npm run test:rules -- ../../Schema/drmd-business-rules.sch
+```
+
+`test/rules-unit.cjs` compares the rules embedded in `src/utils/drmdBusinessRules.ts` with the official rule file `drmd-business-rules.sch` of the DRMD schema repository (https://github.com/punitharumilli/Schema): the same patterns, rule contexts, assertion ids, roles, XPath tests and messages, in the same order, the same namespaces and the same `schemaVersion`. Give the path of the rule file, or set `DRMD_RULES`. Run it after every change to either file.
 
 ## Every three months
 

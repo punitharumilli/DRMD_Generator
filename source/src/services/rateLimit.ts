@@ -30,7 +30,7 @@ const listeners = new Set<() => void>();
 let version = 0;
 
 /** FNV-1a: a fingerprint of the key, so that the key itself is not kept in another table. */
-const fingerprint = (apiKey: string): string => {
+export const fingerprint = (apiKey: string): string => {
     let h = 0x811c9dc5;
     for (let i = 0; i < apiKey.length; i++) { h ^= apiKey.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return h.toString(16);

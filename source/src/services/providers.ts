@@ -302,10 +302,24 @@ const splitParams = (params: GenerateParams) => {
  * Error texts are shown on screen and in the console. Some providers repeat part of the key in them
  * (OpenAI: "Incorrect API key provided: sk-proj-****abcd"), so the key and such masked forms are removed.
  */
-const hideKey = (text: string, apiKey: string): string => {
+export const hideKey = (text: string, apiKey: string): string => {
     let t = text;
     if (apiKey && apiKey.length >= 8) t = t.split(apiKey).join('[key hidden]');
     return t.replace(/\b[A-Za-z0-9_-]{2,}\*{3,}[A-Za-z0-9_-]{0,}/g, '[key hidden]');
+};
+
+/**
+ * The same for an error object of a provider's SDK. Google's SDK puts the whole error answer into the
+ * message, and the browser console shows the stack, which repeats the message: both are cleaned.
+ */
+export const hideKeyInError = (error: unknown, apiKey: string): void => {
+    if (!error || typeof error !== 'object') return;
+    const e = error as Record<string, unknown>;
+    for (const field of ['message', 'stack']) {
+        if (typeof e[field] === 'string') {
+            try { e[field] = hideKey(e[field] as string, apiKey); } catch { /* a read-only field stays as it is */ }
+        }
+    }
 };
 
 /** Reads the provider's error answer into one sentence, with the flags the retry logic uses. */

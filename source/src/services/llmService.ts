@@ -3,11 +3,10 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { DRMD } from "../types";
-import { LlmConnection, PROVIDERS, chainFor, modelLabel, callProvider, geminiUsage, ReportedUsage } from "./providers";
+import { LlmConnection, PROVIDERS, chainFor, modelLabel, callProvider, geminiUsage, ReportedUsage, hideKeyInError } from "./providers";
 import { recordUsage } from "./usage";
-import { waitForSlot, recordRequest, learnFromRateLimit, forgetObservedLimits } from "./rateLimit";
+import { waitForSlot, recordRequest, learnFromRateLimit, forgetObservedLimits, fingerprint } from "./rateLimit";
 import { convertToDSI } from "../utils/unitConverter";
-import { isValidCas } from "../utils/chemicalIdentifierService";
 
 // ---- Model configuration ----------------------------------------------------
 // The models to try, in order, come from the chosen provider (see providers.ts: chainFor). When a
@@ -162,7 +161,8 @@ const isDailyQuotaError = (error: any): boolean =>
 // every later call re-discovers the limit by sending yet another request — which is how a burst of
 // identifier look-ups pushed the NEXT certificate's extraction into "all models rate limited".
 interface Cooldown { until: number; daily: boolean; error: any }
-const cooldowns = new Map<string, Cooldown>(); // key: `${apiKey}|${model}`
+// Keyed by a fingerprint of the API key, so that the key itself is not kept in another table (rateLimit.ts).
+const cooldowns = new Map<string, Cooldown>(); // key: `${fingerprint(apiKey)}|${model}`
 
 const msUntilPacificMidnight = (): number => {
     try {
@@ -183,14 +183,15 @@ const noteQuotaHit = (apiKey: string, model: string, error: any): Cooldown => {
         ? Math.min(msUntilPacificMidnight(), 3600000)
         : (getServerRetryDelayMs(error) ?? QUOTA_BACKOFF_MS);
     const cd: Cooldown = { until: Date.now() + waitMs, daily, error };
-    cooldowns.set(`${apiKey}|${model}`, cd);
+    cooldowns.set(`${fingerprint(apiKey)}|${model}`, cd);
     return cd;
 };
 
 const activeCooldown = (apiKey: string, model: string): Cooldown | null => {
-    const cd = cooldowns.get(`${apiKey}|${model}`);
+    const k = `${fingerprint(apiKey)}|${model}`;
+    const cd = cooldowns.get(k);
     if (!cd) return null;
-    if (cd.until <= Date.now()) { cooldowns.delete(`${apiKey}|${model}`); return null; }
+    if (cd.until <= Date.now()) { cooldowns.delete(k); return null; }
     return cd;
 };
 
@@ -201,8 +202,8 @@ const anyModelCoolingDown = (conn: LlmConnection): boolean => chainFor(conn).som
 // answering), the next ones would almost certainly do the same. Pause optional lookups briefly so a
 // document's 20+ identifier decisions don't each sit through the full retry cycle.
 const OPTIONAL_PAUSE_MS = 60000;
-const optionalPauses = new Map<string, number>(); // apiKey -> paused until
-const optionalCallsPaused = (apiKey: string): boolean => (optionalPauses.get(apiKey) ?? 0) > Date.now();
+const optionalPauses = new Map<string, number>(); // fingerprint(apiKey) -> paused until
+const optionalCallsPaused = (apiKey: string): boolean => (optionalPauses.get(fingerprint(apiKey)) ?? 0) > Date.now();
 
 /**
  * Forget remembered rate limits for this key. Called when the USER starts a run (upload, folder,
@@ -210,10 +211,11 @@ const optionalCallsPaused = (apiKey: string): boolean => (optionalPauses.get(api
  * instead of trusting a remembered "daily quota used up" for up to an hour.
  */
 export const clearQuotaMemory = (apiKey: string): void => {
+    const fp = fingerprint(apiKey);
     for (const key of Array.from(cooldowns.keys())) {
-        if (key.startsWith(`${apiKey}|`)) cooldowns.delete(key);
+        if (key.startsWith(`${fp}|`)) cooldowns.delete(key);
     }
-    optionalPauses.delete(apiKey);
+    optionalPauses.delete(fp);
     forgetObservedLimits(apiKey);
 };
 
@@ -378,12 +380,17 @@ const generateWithModelFallback = async (
                         purpose: pacing.purpose, doc: pacing.doc, usage, durationMs: Date.now() - startedRequest,
                     });
                     // The models answer again, so background look-ups need not stay paused.
-                    optionalPauses.delete(apiKey);
+                    optionalPauses.delete(fingerprint(apiKey));
                     return response;
                 } catch (err: any) {
                     // The SDK reports an aborted request as a generic AbortError — relabel it so the
                     // handler below (and the user) sees "timed out", not "aborted".
-                    throw timedOut ? new AttemptTimeoutError(model, thisAttemptTimeoutMs) : err;
+                    if (timedOut) throw new AttemptTimeoutError(model, thisAttemptTimeoutMs);
+                    // Errors of the other providers come from providers.ts with the key removed. Google's
+                    // SDK passes the error answer on as it is, so the key is removed here, before the
+                    // error is classified, shown or logged.
+                    if (ai) hideKeyInError(err, apiKey);
+                    throw err;
                 } finally {
                     clearTimeout(deadline);
                 }
@@ -472,7 +479,7 @@ const generateWithModelFallback = async (
 
     // Every model in the chain failed — give the user the actual reason and a next step,
     // instead of a bare error from whichever model happened to be tried last.
-    if (pacing.optional) optionalPauses.set(apiKey, Date.now() + OPTIONAL_PAUSE_MS);
+    if (pacing.optional) optionalPauses.set(fingerprint(apiKey), Date.now() + OPTIONAL_PAUSE_MS);
     const tried = MODEL_CHAIN.map(named).join(', ');
     if (quotaLimitedModels === MODEL_CHAIN.length) {
         const daily = dailyLimitedModels === MODEL_CHAIN.length;
@@ -1378,7 +1385,9 @@ export const decideChemicalIdentifiersDetailed = async (
     // CAS), and InChIKey / CID come from the API fields it is told to copy. Asking the model there
     // costs a request and changes nothing — and one request per element is what used to burn
     // through the rate limit. Zero or several candidates still go to the model as before.
-    const needsLlm = !options.skipLlm && casCandidates.length !== 1;
+    // With no candidate there is nothing to choose: no CAS number is written, because a number that
+    // PubChem and the element table do not give cannot be checked against a registry.
+    const needsLlm = !options.skipLlm && casCandidates.length > 1;
     let decidedBy: DecisionSource = needsLlm ? 'llm' : (options.skipLlm ? 'fallback' : 'determined');
 
     const prompt = `You are an expert in chemical nomenclature and identifiers.
@@ -1439,32 +1448,17 @@ IMPORTANT:
     // large synonym list). Now that we have check-digit-validated candidates, guarantee the
     // identifiers get filled from the API data whenever the model failed to.
 
-    // CAS: accept the model's choice only if it's a valid candidate; otherwise fall back to
-    // the primary (first) validated candidate.
+    // CAS: the model's choice only if it is one of the validated candidates; otherwise the primary
+    // (first) candidate. A number the model proposes itself is never written.
     let finalCas = (decided.cas || "").trim();
-    if (finalCas) {
-        // Keep the model's pick only if it is a genuinely valid CAS (and, when we have a
-        // candidate list, one of the candidates). This filters out hallucinated numbers.
-        const isKnownCandidate = casCandidates.includes(finalCas);
-        if (!isKnownCandidate && (!isValidCas(finalCas) || casCandidates.length > 0)) {
-            finalCas = "";
-        }
-    }
+    if (!casCandidates.includes(finalCas)) finalCas = "";
     if (!finalCas && casCandidates.length > 0) {
         finalCas = casCandidates[0];
     }
 
-    // InChIKey: fall back to the PubChem property value if the model omitted it.
-    let finalInchiKey = (decided.inchiKey || "").trim();
-    if (!finalInchiKey && apiInchiKey) {
-        finalInchiKey = apiInchiKey;
-    }
-
-    // PubChem CID: fall back to the API value.
-    let finalCid = (decided.pubchemCid || "").trim();
-    if (!finalCid && apiCid) {
-        finalCid = apiCid;
-    }
+    // InChIKey and PubChem CID: always as PubChem gives them, never from the model's answer.
+    const finalInchiKey = apiInchiKey.trim();
+    const finalCid = String(apiCid).trim();
 
     const result: { cas?: string; inchiKey?: string; pubchemCid?: string } = {};
     if (finalCas) result.cas = finalCas;
