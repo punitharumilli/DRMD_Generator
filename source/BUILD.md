@@ -47,6 +47,7 @@ npm run test:dsi
 - `test/dsi-matrix.cjs`: runs every scenario through the generator's own code (rule engine and XML), plus number reading, the check of AI answers and speed. Writes `test/out-matrix/matrix.json`.
 - `test/dsi-xcheck.py` with `test/dsi_reference.py`: a second implementation of the D-SI rules, written separately from the generator code, judges more than 120,000 generated D-SI strings; the generator must agree on every one. Needs Python 3.
 - `test/dsi-unit.cjs`, `test/rpm-unit.cjs`: shorter checks of the rule engine (with the exact decimal arithmetic) and of the requests-per-minute tracker.
+- `test/page/`: the same checks and the cross-check on the functions of the published page itself, in a browser (see `test/page/README.md`).
 - `test/expect-hybrid.py`: computes the SI values of `si:hybrid` that the scenarios expect, separately from the generator code, from the unit definitions (Python `decimal`): the converted value keeps the significant digits of the printed value, a temperature in °F is converted as (t − 32) × 5/9 + 273.15, and the uncertainty is rounded up to two significant digits. Needs Python 3.
 
 Run them after every change to `dsi.ts`, `xmlValues.ts` or `xmlGenerator.ts`. When a rule of the D-SI changes, change the scenario's expected unit first (with its source), then the code.
