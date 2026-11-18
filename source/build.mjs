@@ -131,7 +131,7 @@ const html = `<!DOCTYPE html>
 <meta name="description" content="Converts reference material certificates (PDF) into Digital Reference Material Documents (DRMD XML).">
 <!-- Security policy. Only the scripts built into this file can run (each one is listed by its SHA-256
      fingerprint), so injected code, inline event handlers and "javascript:" links are refused. The page
-     may only talk to the AI providers listed below, PubChem, CAS Common Chemistry and ROR, and loads
+     may only talk to the AI providers listed below, PubChem and ROR, and loads
      nothing else. -->
 <meta http-equiv="Content-Security-Policy" content="__CSP__">
 <title>DRMD AI Generator</title>
@@ -209,7 +209,7 @@ const csp = [
   "style-src 'unsafe-inline'",
   "font-src data:",
   "img-src data: blob:",
-  "connect-src 'self' blob: data: https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.mistral.ai https://dashscope-intl.aliyuncs.com https://dashscope-us.aliyuncs.com https://dashscope.aliyuncs.com https://openrouter.ai https://pubchem.ncbi.nlm.nih.gov https://commonchemistry.cas.org https://api.ror.org",
+  "connect-src blob: data: https://generativelanguage.googleapis.com https://api.openai.com https://api.anthropic.com https://api.mistral.ai https://dashscope-intl.aliyuncs.com https://dashscope-us.aliyuncs.com https://dashscope.aliyuncs.com https://openrouter.ai https://pubchem.ncbi.nlm.nih.gov https://api.ror.org",
   "frame-src 'none'",
   "media-src 'none'",
   "manifest-src 'none'",

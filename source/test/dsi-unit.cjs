@@ -123,23 +123,42 @@ check('unitWriting: a typed D-SI unit of another size is not ok (the value is wr
 check('unitWriting: lb as \\kilogram is si:hybrid, class gold', (() => { const w = unitWriting('lb', '\\kilogram'); return w.ok && w.hybrid && w.hybrid.def && w.cls === 'gold'; })());
 check('unitWriting: "% (m/m)" gives QUDT MassFraction; "%" alone none', unitWriting('% (m/m)', '\\percent').qudt === 'MassFraction' && !unitWriting('%', '\\percent').qudt);
 check('unitWriting: ‰ in a δ13C value gets si:label δ13CVPDB', unitWriting('‰ vs VPDB', '\\one', ctx('δ13C')).label === 'δ13CVPDB');
-check('writtenValueText: "150" lb → si:hybrid with 68.039 \\kilogram and 150 lb', writtenValueText('150', '\\kilogram', unitWriting('lb', '\\kilogram')) === 'si:hybrid with 68.039 \\kilogram and 150 lb');
+check('writtenValueText: "150" lb → si:hybrid with 68.0 \\kilogram and 150 lb; with the uncertainty 20 lb → 68', writtenValueText('150', '\\kilogram', unitWriting('lb', '\\kilogram')) === 'si:hybrid with 68.0 \\kilogram and 150 lb' && writtenValueText('150', '\\kilogram', unitWriting('lb', '\\kilogram'), '20') === 'si:hybrid with 68 \\kilogram and 150 lb');
 
 // Exact decimal arithmetic (no floating point): shifting a power of ten and converting with a factor
 const SHIFT = [['196.4', 3, '196.4e3'], ['5', -3, '5e-3'], ['1.2e-3', 3, '1.2'], ['-0.52', 1, '-0.52e1'], ['0.012', 0, '0.012'], ['1.20E2', -2, '1.20']];
 for (const [v, n, want] of SHIFT) check(`shiftDecimal(${v}, ${n}) = ${want}`, V.shiftDecimal(v, n) === want, V.shiftDecimal(v, n));
 const B = (x) => BigInt(x);
+// Conversions for si:hybrid (D-SI expert review, 13 November 2026): the converted value is not finer than
+// the printed value (it keeps its significant digits; zeros at the end of a whole number count only as far
+// as the uncertainty says), a temperature first moves the zero of its scale and then adds the exact offset,
+// a temperature difference has no offset, and an uncertainty is rounded up to two significant digits.
+const LB = { num: B(45359237), den: B(100000000) }, DEGF = { num: B(5), den: B(9), pre: '-32', post: '273.15' };
 const CONV = [
-  ['150', B(45359237), B(100000000), B(0), B(1), false, '68.039'], ['0.5', B(45359237), B(100000000), B(0), B(1), true, '0.2268'],
-  ['98.6', B(5), B(9), B(45967), B(180), false, '310.1500'], ['32', B(5), B(9), B(45967), B(180), false, '273.150'], ['-40', B(5), B(9), B(45967), B(180), false, '233.150'],
-  ['0.5', B(5), B(9), B(45967), B(180), true, '0.2778'], ['1.5', B(37), B(1), B(0), B(1), false, '55.50'], ['14.7', B('44482216152605'), B('6451600000000'), B(0), B(1), false, '101.353'],
-  ['0.00012', B(254), B(10), B(0), B(1), false, '0.003048'], ['2.5E3', B(3048), B(10000), B(0), B(1), false, '762.0'], ['12345678', B(3048), B(10000), B(0), B(1), false, '3762962.654'],
+  ['150', LB, {}, '68.0'], ['150.0', LB, {}, '68.04'], ['150', LB, { uncertainty: '20' }, '68'], ['150', LB, { uncertainty: '2' }, '68.0'],
+  ['150', LB, { uncertainty: '0.5' }, '68.0'], ['100', LB, { uncertainty: '20' }, '45'], ['1.50e2', LB, {}, '68.0'],
+  ['98.6', DEGF, {}, '310.15'], ['32', DEGF, {}, '273.15'], ['-40', DEGF, {}, '233.15'], ['212', DEGF, {}, '373.15'], ['98.6', DEGF, { difference: true }, '54.8'],
+  ['1.5', { num: B(37), den: B(1) }, {}, '56'], ['14.7', { num: B('44482216152605'), den: B('6451600000000') }, {}, '101'],
+  ['0.00012', { num: B(254), den: B(10) }, {}, '0.0030'], ['2.5E3', { num: B(3048), den: B(10000) }, {}, '7.6e2'], ['12345678', { num: B(3048), den: B(10000) }, {}, '3762962.7'],
 ];
-for (const [v, n, d, on, od, unc, want] of CONV) {
-  const got = V.convertDecimal(v, n, d, on, od, unc);
-  check(`convertDecimal(${v} × ${n}/${d}${unc ? '' : ` + ${on}/${od}`}) = ${want}`, got === want, got);
+for (const [v, c, o, want] of CONV) {
+  const got = V.convertDecimal(v, c, o);
+  check(`convertDecimal(${v}${c.pre ? ` + ${c.pre}` : ''} × ${c.num}/${c.den}${c.post && !o.difference ? ` + ${c.post}` : ''}${o.uncertainty ? `, uncertainty ${o.uncertainty}` : ''}${o.difference ? ', a difference' : ''}) = ${want}`, got === want, got);
 }
-check('convertDecimal: not a number → null', V.convertDecimal('1,234', B(1), B(1)) === null && V.convertDecimal('< 2', B(1), B(1)) === null);
+const UNC = [['0.5', LB, '0.23'], ['2', LB, '0.91'], ['20', LB, '9.1'], ['0.012', DEGF, '0.0067'], ['0.0123', LB, '0.00558'], ['0', LB, '0'], ['1', { num: B(101325), den: B(1000) }, '1.1e2']];
+for (const [v, c, want] of UNC) {
+  const got = V.convertUncertainty(v, c);
+  check(`convertUncertainty(${v} × ${c.num}/${c.den}) = ${want} (factor only, rounded up)`, got === want, got);
+}
+check('convertDecimal: not a number → null', V.convertDecimal('1,234', LB) === null && V.convertDecimal('< 2', LB) === null && V.convertUncertainty('-1', LB) === null);
+check('significantDigits: "150" has 3 (zeros assumed), "150" ± 20 has 2, "150.0" has 4', (() => { const a = V.significantDigits('150'), b = V.significantDigits('150', '20'), c = V.significantDigits('150.0'); return a.digits === 3 && a.zerosAssumed && b.digits === 2 && !b.zerosAssumed && c.digits === 4 && !c.zerosAssumed; })());
+check('hybridValue: °F in a temperature difference has no offset', (() => { const w = unitWriting('°F', '\\kelvin', ctx('Temperature difference')); return w.hybrid && w.hybrid.difference && hybridValue('98.6', w.hybrid.def, { difference: true }) === '54.8'; })());
+check('toDsi: °F in a temperature has the offset (no difference)', (() => { const r = toDsi('°F', ctx('Melting temperature')); return r.hybrid && !r.hybrid.difference; })());
+check('toDsi: emu, cP, M and ppb of a stated kind are flagged as changed; mg/kg and Ohm are not', (() => {
+  const c = (u, t) => !!toDsi(u, t ? ctx(t) : undefined).changed;
+  return c('emu', 'Magnetic moment') && c('cP') && c('mol/L') === false && c('M') && c('ppb', 'Mass fraction of Pb') && !c('mg/kg') && !c('Ohm') && !c('sec');
+})());
+check('toDsi: "mg/kg m/m" is a mass fraction in mg/kg, not metre per metre', (() => { const r = toDsi('mg/kg m/m'); return r.dsi === '\\milli\\gram\\kilogram\\tothe{-1}' && r.notes.some(n => n.type === 'kind' && n.text === 'm/m'); })());
 check('hybridValue: G (10⁻⁴ T exactly) writes 12.345e-4, nothing rounded', hybridValue('12.345', { si: '\\tesla', name: 'gauss', pow: -4, definition: '' }) === '12.345e-4');
 
 check('ppb as a mass fraction: accepted only with the kind', verifySameUnit('ppb', '\\micro\\gram\\kilogram\\tothe{-1}', 'mass').ok && !verifySameUnit('ppb', '\\micro\\gram\\kilogram\\tothe{-1}').ok && !verifySameUnit('ppb', '\\micro\\gram\\kilogram\\tothe{-1}', 'amount').ok);

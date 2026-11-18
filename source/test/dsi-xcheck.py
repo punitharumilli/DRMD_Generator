@@ -11,27 +11,13 @@ the same >100,000 generated D-SI strings (valid and broken ones); every verdict,
 dimension must agree. The expected D-SI units of all scenarios (dsi-scenarios.cjs) are checked too.
 Run: python3 -I test/dsi-xcheck.py
 """
-import json, os, random, subprocess, sys, tempfile
+import json, os, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from dsi_reference import U, PRE, BIN, check
+from dsi_reference import check
+from dsi_expressions import expressions
 
-random.seed(7)
-units = list(U); pres = [None] + list(PRE) + list(BIN)
-exps = ['', '2', '-1', '3', '-2', '0.5', '-0.5', '+0.5', '0', '1.5', '01', '2.0', '+2', '-0', '1/2', ' 2', 'x']
-def tok(p, n, e): return (f'\\{p}' if p else '') + f'\\{n}' + (f'\\tothe{{{e}}}' if e != '' else '')
-cases = set()
-for n in units:
-    for p in pres:
-        for e in exps: cases.add(tok(p, n, e))
-for _ in range(60000):
-    cases.add(''.join(tok(random.choice(pres) if random.random() < 0.35 else None, random.choice(units), random.choice(exps[:9]) if random.random() < 0.5 else '') for _ in range(random.randint(2, 4))))
-for _ in range(25000):
-    side = lambda: ''.join(tok(random.choice(pres) if random.random() < 0.3 else None, random.choice(units), random.choice(exps[:9]) if random.random() < 0.4 else '') for _ in range(random.randint(1, 2)))
-    cases.add(side() + '\\per' + side())
-cases.update(['\\milli\\kilo\\metre', '\\metre\\tothe{2}\\tothe{3}', '\\Metre', '\\metre \\second', '\\metres', '\\milligram', '\\kilo\\gram', '\\deci\\bel', '\\milli', '\\tothe{2}',
-              'metre', '\\metre\\', '\\metre{2}', '\\metre\\tothe', '', '\\per\\second', '\\metre\\per', '\\metre\\per\\second\\per\\second', '\\milli\\per\\second', '\\metre\\per\\tothe{2}'])
-cases = sorted(cases)
+cases = expressions()
 
 node = r"""
 const esbuild = (() => { try { return require('module').createRequire(process.argv[2])('esbuild'); } catch { return require(process.env.ESBUILD_PATH || '/opt/npm-tools/node_modules/esbuild'); } })();

@@ -15,8 +15,6 @@ export interface ChemicalApiResults {
     casCandidates?: string[];
     /** A small sample of synonyms for the model to use as context (NOT the full list). */
     synonymSample?: string[];
-    /** Raw CAS Common Chemistry search result (may be empty if the endpoint is blocked by CORS). */
-    casCommonChemistry?: any;
 }
 
 // A CAS Registry Number is 2–7 digits, then 2 digits, then a single check digit: e.g. 7440-50-8
@@ -141,23 +139,10 @@ export const lookupChemicalIdentifiers = async (name: string): Promise<ChemicalA
         results.synonymSample = synonyms.slice(0, 15);
     }
 
-    // 3. CAS Common Chemistry Search (validation / fallback). Often CORS-blocked in the
-    //    browser — that's fine, it's best-effort and we already have PubChem + local data.
-    try {
-        const casRes = await fetchWithTimeout(`https://commonchemistry.cas.org/api/search?q=${safeName}`, 10000);
-        if (casRes.ok) {
-            const json = await casRes.json();
-            results.casCommonChemistry = json;
-            const rns: string[] = (json?.results || []).map((r: any) => r?.rn).filter(Boolean);
-            for (const cas of extractValidCasNumbers(rns)) {
-                if (!casCandidates.includes(cas)) casCandidates.push(cas);
-            }
-        }
-    } catch (err) {
-        // best effort only
-    }
+    // CAS Common Chemistry is not asked: its API needs an API key of its own and does not answer
+    // requests from a web page, so a request would only send the substance name there for nothing.
 
-    // 4. LOCAL FALLBACK for elements. The app ships a full periodic-table CAS map, so even
+    // 3. LOCAL FALLBACK for elements. The app ships a full periodic-table CAS map, so even
     //    if every network lookup above failed (rate limit, offline, CORS), an element name
     //    or symbol (e.g. "Ni", "Nickel", "Fe") still yields a guaranteed, correct CAS.
     const localCas = getCasNumber(name);

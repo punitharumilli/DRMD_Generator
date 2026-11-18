@@ -339,21 +339,25 @@ for (const [u, e] of [['bit', '\\bit'], ['byte', '\\byte'], ['KiB', '\\kibi\\byt
 
 // ── 18. Units outside the SI with a defined SI conversion: si:hybrid, first the SI value, then the value as
 // printed (D-SI guide Section 7 pp. 33–36; D-SI expert review). Factors: NIST SP 811, Appendix B (and the
-// D-SI guide p. 36 for °F); `si`: the SI value of 12.345 and of 0.012, from test/expect-hybrid.py.
+// D-SI guide p. 36 for °F); `si`: the SI value of 12.345 and of 0.012, from test/expect-hybrid.py (the value
+// keeps its significant digits, the uncertainty is rounded up to two significant digits).
 const HYBRID = [
-  ['lb', '\\kilogram', ['5.599598', '0.005443']], ['lbs', '\\kilogram', ['5.599598', '0.005443']], ['pounds', '\\kilogram', ['5.599598', '0.005443']],
-  ['ft', '\\metre', ['3.762756', '0.003658']], ['feet', '\\metre', ['3.762756', '0.003658']], ['in', '\\milli\\metre', ['313.5630', '0.3048']], ['inch', '\\milli\\metre', ['313.5630', '0.3048']],
-  ['yd', '\\metre', ['11.288268', '0.010973']], ['mi', '\\kilo\\metre', ['19.86735', '0.01931']], ['psi', '\\kilo\\pascal', ['85.11578', '0.08274']],
-  ['atm', '\\kilo\\pascal', ['1250.857', '1.216']], ['Torr', '\\pascal', ['1645.865', '1.600']], ['mTorr', '\\pascal', ['1.645865', '0.001600']],
-  ['kgf', '\\newton', ['121.06309', '0.11768']], ['kp', '\\newton', ['121.06309', '0.11768']], ['gf', '\\milli\\newton', ['121.06309', '0.11768']],
-  ['kgf/cm²', '\\kilo\\pascal', ['1210.6309', '1.1768']], ['kgf/mm²', '\\mega\\pascal', ['121.06309', '0.11768']], ['lbf', '\\newton', ['54.91330', '0.05338']],
-  ['mmH2O', '\\pascal', ['121.06309', '0.11768']], ['cmH2O', '\\pascal', ['1210.6309', '1.1768']], ['°F', '\\kelvin', ['262.230556', '0.006667']],
-  ['degrees Fahrenheit', '\\kelvin', ['262.230556', '0.006667']], ['°R', '\\kelvin', ['6.858333', '0.006667']],
-  ['Oe', '\\ampere\\metre\\tothe{-1}', ['982.3839', '0.9549']], ['kOe', '\\kilo\\ampere\\metre\\tothe{-1}', ['982.3839', '0.9549']],
-  ['Ci', '\\giga\\becquerel', ['456.7650', '0.4440']], ['mCi', '\\mega\\becquerel', ['456.7650', '0.4440']], ['µCi', '\\kilo\\becquerel', ['456.7650', '0.4440']],
-  ['nCi', '\\becquerel', ['456.7650', '0.4440']], ['pCi', '\\milli\\becquerel', ['456.7650', '0.4440']],
+  ['lb', '\\kilogram', ['5.5996', '0.0055']], ['lbs', '\\kilogram', ['5.5996', '0.0055']], ['pounds', '\\kilogram', ['5.5996', '0.0055']],
+  ['ft', '\\metre', ['3.7628', '0.0037']], ['feet', '\\metre', ['3.7628', '0.0037']], ['in', '\\milli\\metre', ['313.56', '0.31']], ['inch', '\\milli\\metre', ['313.56', '0.31']],
+  ['yd', '\\metre', ['11.288', '0.011']], ['mi', '\\kilo\\metre', ['19.867', '0.020']], ['psi', '\\kilo\\pascal', ['85.116', '0.083']],
+  ['atm', '\\kilo\\pascal', ['1250.9', '1.3']], ['Torr', '\\pascal', ['1645.9', '1.6']], ['mTorr', '\\pascal', ['1.6459', '0.0016']],
+  ['kgf', '\\newton', ['121.06', '0.12']], ['kp', '\\newton', ['121.06', '0.12']], ['gf', '\\milli\\newton', ['121.06', '0.12']],
+  ['kgf/cm²', '\\kilo\\pascal', ['1210.6', '1.2']], ['kgf/mm²', '\\mega\\pascal', ['121.06', '0.12']], ['lbf', '\\newton', ['54.913', '0.054']],
+  ['mmH2O', '\\pascal', ['121.06', '0.12']], ['cmH2O', '\\pascal', ['1210.6', '1.2']], ['°F', '\\kelvin', ['262.231', '0.0067']],
+  ['degrees Fahrenheit', '\\kelvin', ['262.231', '0.0067']], ['°R', '\\kelvin', ['6.8583', '0.0067']],
+  ['Oe', '\\ampere\\metre\\tothe{-1}', ['982.38', '0.96']], ['kOe', '\\kilo\\ampere\\metre\\tothe{-1}', ['982.38', '0.96']],
+  ['Ci', '\\giga\\becquerel', ['456.77', '0.45']], ['mCi', '\\mega\\becquerel', ['456.77', '0.45']], ['µCi', '\\kilo\\becquerel', ['456.77', '0.45']],
+  ['nCi', '\\becquerel', ['456.77', '0.45']], ['pCi', '\\milli\\becquerel', ['456.77', '0.45']],
 ];
 for (const [u, e, si] of HYBRID) add('18 Non-SI units in si:hybrid', u, e, { hybrid: u === 'pounds' || u === 'feet' || u === 'degrees Fahrenheit' ? { pounds: 'pounds', feet: 'feet', 'degrees Fahrenheit': '°F' }[u] : u, si, why: 'not a unit of the SI: si:hybrid with the SI value first', cite: 'D-SI guide Section 7 pp. 33–36; NIST SP 811 Appendix B' });
+add('18 Non-SI units in si:hybrid', '°F', '\\kelvin', { ctx: ['Temperature difference'], si: ['6.8583', '0.0067'], hybrid: '°F', why: 'a temperature difference: converted without the offset of the scale (1 °F = 5/9 K)', cite: 'D-SI guide Section 7 p. 36; D-SI expert review' });
+add('18 Non-SI units in si:hybrid', '°F', '\\kelvin', { ctx: ['ΔT between the two cells'], si: ['6.8583', '0.0067'], hybrid: '°F', why: 'ΔT: a temperature difference, without the offset', cite: 'D-SI guide Section 7 p. 36; D-SI expert review' });
+add('18 Non-SI units in si:hybrid', '°F', '\\kelvin', { ctx: ['Melting temperature'], si: ['262.231', '0.0067'], hybrid: '°F', why: 'a temperature: (t − 32) × 5/9 + 273.15', cite: 'D-SI guide Section 7 p. 36' });
 for (const [u, e, n, c] of [['G', '\\tesla', -4, 'Magnetic flux density'], ['Gs', '\\tesla', -4, 'Remanence (magnetic induction)'], ['gauss', '\\tesla', -4, null], ['Gal', '\\metre\\second\\tothe{-2}', -2, 'Gravity acceleration'],
   ['mGal', '\\metre\\second\\tothe{-2}', -5, 'Gravity anomaly (gravity)'], ['rem', '\\sievert', -2, null], ['mrem', '\\milli\\sievert', -2, null], ['mrad', '\\milli\\gray', -2, 'Absorbed dose']]) {
   add('18 Non-SI units in si:hybrid', u, e, { si: [`12.345e${n}`, `0.012e${n}`], hybrid: u, ...(c ? { ctx: [c] } : {}), why: 'exactly a power of ten of an SI unit: si:hybrid, the power of ten in the number', cite: 'NIST SP 811 Appendix B; D-SI guide Section 7 p. 33' });
@@ -396,6 +400,12 @@ add('21 emu (CGS)', 'emu/g', '\\milli\\ampere\\metre\\tothe{2}\\gram\\tothe{-1}'
 // ── 22. The kind of quantity in QUDT for %, ppm (D-SI expert review: recommended for ambiguous units)
 for (const [u, c, q] of [['%', 'Mass fraction of Fe', 'MassFraction'], ['%', 'Amount fraction of CO2', 'AmountOfSubstanceFraction'], ['ppm', 'Volume fraction', 'VolumeFraction'], ['%', null, null], ['ppm', 'Concentration', null]]) {
   add('22 QUDT quantity kind', u, u === '%' ? '\\percent' : '\\ppm', { ...(c ? { ctx: [c] } : {}), ...(q ? { qudt: q } : {}), why: q ? 'the kind of fraction is stated: si:quantityTypeQUDT' : 'kind not stated: no QUDT', cite: 'D-SI 2.2.1 (si:quantityTypeQUDT); QUDT quantity kinds' });
+}
+// ── 23. The kind of fraction written without brackets after a content unit: "m/m" is not metre per metre
+for (const [u, e] of [['mg/kg m/m', '\\milli\\gram\\kilogram\\tothe{-1}'], ['mg/kg  m/m', '\\milli\\gram\\kilogram\\tothe{-1}'], ['g/kg w/w', '\\gram\\kilogram\\tothe{-1}'],
+  ['µg/g m/m', '\\micro\\gram\\gram\\tothe{-1}'], ['mg/kg m/m dry mass', '\\milli\\gram\\kilogram\\tothe{-1}'], ['mmol/mol mol/mol', '\\milli\\mole\\mole\\tothe{-1}'],
+  ['V/V', '\\volt\\volt\\tothe{-1}'], ['W/m', '\\watt\\metre\\tothe{-1}'], ['W m/m', '\\watt\\metre\\metre\\tothe{-1}']]) {
+  add('23 Kind of fraction without brackets', u, e, { why: /^[VW]/.test(u) ? 'no content unit before it: the letters are unit symbols' : 'after a content unit, "m/m" (w/w, mol/mol) names the kind of fraction and is left out of the unit', cite: 'Section 3 pp. 12–17 (a D-SI unit holds only unit, prefix and exponent identifiers)' });
 }
 add('15 D-SI strings typed in the form', 'metre', '\\metre', { rule: 'R008', why: 'as a unit text, the name of the metre; as a D-SI string it breaks R008', cite: 'R008 pp. 71–72; SI brochure 5.3' });
 

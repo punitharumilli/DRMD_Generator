@@ -124,35 +124,109 @@ const formatScaled = (z: bigint, q: number): string => {
     return `${sign}${digits[0]}${digits.length > 1 ? `.${digits.slice(1)}` : ''}e${magnitude}`;
 };
 
-/**
- * A number converted into another unit exactly: value × num / den + offNum / offDen, rounded half away
- * from zero to two digits finer than the printed resolution after conversion (the place of the last
- * printed digit times the factor). "150" lb × 0.453 592 37 → "68.039"; "98.6" °F → "310.1500" K.
- * The rounding stays far below the resolution of the printed number. `scaleOnly` leaves out the offset
- * (an uncertainty is only multiplied by the factor, D-SI guide p. 36). Null when it is not a number.
- */
-export const convertDecimal = (value: string, num: bigint, den: bigint, offNum: bigint = BigInt(0), offDen: bigint = BigInt(1), scaleOnly = false): string | null => {
+/** A number of si:decimalType as digits × 10^exp, and whether it was printed with a decimal point. */
+interface Digits { int: bigint; exp: number; point: boolean }
+const readDigits = (value: string): Digits | null => {
     const m = String(value ?? '').trim().match(MANTISSA);
-    if (!m || (!m[2] && !m[3]) || num <= BigInt(0) || den <= BigInt(0) || offDen <= BigInt(0)) return null;
+    if (!m || (!m[2] && !m[3])) return null;
     const frac = m[3] ?? '';
-    const exp = Number(m[4] ?? 0) - frac.length; // value = int × 10^exp
     let int = BigInt((m[2] ?? '') + frac || '0');
     if (m[1] === '-') int = -int;
-    // X = int × 10^exp as xn / xd
-    const xn = exp >= 0 ? int * pow10n(exp) : int;
-    const xd = exp >= 0 ? BigInt(1) : pow10n(-exp);
-    const on = scaleOnly ? BigInt(0) : offNum, od = scaleOnly ? BigInt(1) : offDen;
-    // Y = X × num/den + on/od
-    const yn = xn * num * od + on * xd * den;
-    const yd = xd * den * od;
-    // The place to round to: two digits finer than the converted resolution 10^exp × num/den
-    const q = exp + floorLog10(num, den) - 2;
-    // z = round(Y / 10^q)
-    const zn = q >= 0 ? yn : yn * pow10n(-q);
-    const zd = q >= 0 ? yd * pow10n(q) : yd;
-    const twice = (absn(zn) * BigInt(2) + zd) / (zd * BigInt(2)); // half away from zero
-    const z = zn < BigInt(0) ? -twice : twice;
-    return formatScaled(z, q);
+    return { int, exp: Number(m[4] ?? 0) - frac.length, point: m[3] !== undefined };
+};
+/** The place (power of ten) of the last digit that is not 0; the last printed place for 0. */
+const lastNonZeroPlace = (d: Digits): number => {
+    const t = absn(d.int).toString();
+    if (t === '0') return d.exp;
+    return d.exp + (t.length - t.replace(/0+$/, '').length);
+};
+/**
+ * The place of the last significant digit of a printed number. With a decimal point every printed digit
+ * counts ("150.0": 0.1). Without one, zeros at the end of a whole number may or may not be significant
+ * ("150"); an uncertainty decides it: "150 ± 2" (units), "150 ± 20" (tens). Without an uncertainty
+ * the last printed digit is taken as significant.
+ */
+const significantPlace = (v: Digits, u: Digits | null): number => {
+    if (v.point || !u || u.int === BigInt(0)) return v.exp;
+    const uPlace = u.point ? u.exp : lastNonZeroPlace(u);
+    return Math.max(v.exp, Math.min(lastNonZeroPlace(v), uPlace));
+};
+/** n / d (both > 0) divided by 10^q, rounded half away from zero, or up. */
+const roundAt = (n: bigint, d: bigint, q: number, up: boolean): bigint => {
+    const neg = n < BigInt(0);
+    const zn = q >= 0 ? absn(n) : absn(n) * pow10n(-q);
+    const zd = q >= 0 ? d * pow10n(q) : d;
+    const z = up ? (zn + zd - BigInt(1)) / zd : (zn * BigInt(2) + zd) / (zd * BigInt(2));
+    return neg ? -z : z;
+};
+
+/** A conversion into an SI unit: SI value = (value + pre) × num / den + post; pre and post are exact decimals. */
+export interface DecimalConversion { num: bigint; den: bigint; pre?: string; post?: string }
+
+/**
+ * A value converted into another unit, rounded so that it is not finer than the printed value (rounding
+ * half away from zero): it keeps the number of significant digits of the printed value. "150" lb →
+ * "68.0" kg, "150.0" lb → "68.04" kg, "150" lb with the uncertainty 20 lb → "68" kg. An additive
+ * conversion first moves the zero of the scale (exact), converts the scaled part with its significant
+ * digits and then adds the exact offset: "98.6" °F → (98.6 − 32) × 5/9 = 37.0, + 273.15 → "310.15" K.
+ * `difference`: the value is a difference (a temperature difference), so no offset applies: "98.6" °F →
+ * "54.8" K. `uncertainty`: the printed uncertainty of the value, which tells whether zeros at the end of
+ * a whole number are significant. Null when it is not a number.
+ */
+export const convertDecimal = (value: string, c: DecimalConversion, opts: { uncertainty?: string | null; difference?: boolean } = {}): string | null => {
+    const v = readDigits(value);
+    if (!v || c.num <= BigInt(0) || c.den <= BigInt(0)) return null;
+    const pre = !opts.difference && c.pre ? readDigits(c.pre) : null;
+    const post = !opts.difference && c.post ? readDigits(c.post) : null;
+    if ((!opts.difference && c.pre && !pre) || (!opts.difference && c.post && !post)) return null;
+    const u = opts.uncertainty ? readDigits(opts.uncertainty) : null;
+    const p = significantPlace(v, u && u.int >= BigInt(0) ? u : null);
+    // X' = value + pre, as an integer × 10^e
+    let e = v.exp, x = v.int;
+    if (pre) {
+        e = Math.min(v.exp, pre.exp);
+        x = v.int * pow10n(v.exp - e) + pre.int * pow10n(pre.exp - e);
+    }
+    let z = BigInt(0), q = p;
+    if (x !== BigInt(0)) {
+        // n significant digits: from the first digit of X' to the significant place of the printed value
+        const xn = e >= 0 ? x * pow10n(e) : x, xd = e >= 0 ? BigInt(1) : pow10n(-e);
+        const n = Math.max(1, floorLog10(absn(xn), xd) - p + 1);
+        const yn = xn * c.num, yd = xd * c.den;
+        q = floorLog10(absn(yn), yd) - n + 1;
+        z = roundAt(yn, yd, q, false);
+    }
+    if (!post) return formatScaled(z, q);
+    // + the exact offset, at the finer of the two places
+    const r = Math.min(q, post.exp);
+    return formatScaled(z * pow10n(q - r) + post.int * pow10n(post.exp - r), r);
+};
+
+/**
+ * An uncertainty converted into another unit: only multiplied by the factor (an uncertainty is a
+ * difference, D-SI guide p. 36), and rounded up, never down, to two significant digits, or to as many
+ * as were printed if that is more. "2" lb → "0.91" kg, "0.012" °F → "0.0067" K.
+ */
+export const convertUncertainty = (value: string, c: DecimalConversion): string | null => {
+    const v = readDigits(value);
+    if (!v || v.int < BigInt(0) || c.num <= BigInt(0) || c.den <= BigInt(0)) return null;
+    if (v.int === BigInt(0)) return '0';
+    const xn = v.exp >= 0 ? v.int * pow10n(v.exp) : v.int, xd = v.exp >= 0 ? BigInt(1) : pow10n(-v.exp);
+    const printed = floorLog10(xn, xd) - (v.point ? v.exp : lastNonZeroPlace(v)) + 1;
+    const n = Math.max(2, printed);
+    const yn = xn * c.num, yd = xd * c.den;
+    const q = floorLog10(yn, yd) - n + 1;
+    return formatScaled(roundAt(yn, yd, q, true), q);
+};
+
+/** How many significant digits the printed value has, by the rule of convertDecimal (for the notices). */
+export const significantDigits = (value: string, uncertainty?: string | null): { digits: number; zerosAssumed: boolean } | null => {
+    const v = readDigits(value);
+    if (!v || v.int === BigInt(0)) return null;
+    const u = uncertainty ? readDigits(uncertainty) : null;
+    const p = significantPlace(v, u);
+    const xn = v.exp >= 0 ? absn(v.int) * pow10n(v.exp) : absn(v.int), xd = v.exp >= 0 ? BigInt(1) : pow10n(-v.exp);
+    return { digits: Math.max(1, floorLog10(xn, xd) - p + 1), zerosAssumed: !v.point && !u && lastNonZeroPlace(v) > v.exp };
 };
 
 /** Uncertainty: like toDecimalString, but tolerates "± 0.6", "+/- 0.6", "U = 0.6"; must be ≥ 0. */

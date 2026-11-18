@@ -9,7 +9,7 @@ import { DRMD_SCHEMA_VERSION } from "./drmdBusinessRules";
 import { formStateJson } from "./formState";
 import {
     toDecimalString, readNumber, toUncertaintyString, toCoverageFactor, toCoverageProbability, toXsdDate,
-    toCountryCode, notEmpty, isNoQuantityPlaceholder, isPlaceholderText, shiftDecimal,
+    toCountryCode, notEmpty, isNoQuantityPlaceholder, isPlaceholderText, shiftDecimal, significantDigits,
 } from "./xmlValues";
 
 /*
@@ -298,7 +298,7 @@ ${indent}          <si:real>
 ${indent}            <si:value>${value}</si:value>
 ${indent}            <si:unit>${escapeXml(unit.replace(/\s+/g, ''))}</si:unit>
 ${indent}          </si:real>`;
-            const si = w.ok && w.hybrid ? (w.hybrid.def ? hybridValue(num, w.hybrid.def) : shiftDecimal(num, w.valueExp)) : null;
+            const si = w.ok && w.hybrid ? (w.hybrid.def ? hybridValue(num, w.hybrid.def, { difference: w.hybrid.difference }) : shiftDecimal(num, w.valueExp)) : null;
             body = w.ok && w.hybrid && si !== null
                 ? `
           <si:hybrid>${elem(si, conv.dsiUnit, '  ')}${elem(num, w.hybrid.asWritten, '  ')}
@@ -490,22 +490,43 @@ ${content(`${raw}${humanUnit}`, '                  ')}
             note('VALUE-DIGIT-GROUPS', 'warning', 'Properties',
                 `${where}: the value "${raw}" is written as ${reading.value} (${reading.grouped === 'digit-groups' ? 'digit groups' : 'thousands separators'} removed; si:value has no separators, rule R003, D-SI guide p. 70). Check that it is one number.`);
         }
-        const writtenNotes = (shown: string) => {
+        // A hint for every unit that is changed or augmented: si:hybrid (with how the SI value was rounded),
+        // the value scaled (% (w/v)), or other unit symbols of the same size (cP, M, emu, ppb of a stated kind)
+        const writtenNotes = (shown: string, value?: string, unc?: string | null) => {
             if (!w) return;
             if (w.kindUnknown) {
                 note('DSI-KIND-UNKNOWN', 'warning', 'Properties',
                     `${where}: "${rawUnit}" does not say whether it is a mass, an amount-of-substance or a volume fraction, so the kind of quantity is ambiguous. ` +
                     `It is written in si:hybrid (${shown}). State the kind of fraction in the quantity name or the table, and it is written as a unit of that kind.`);
             } else if (hybrid?.def) {
+                const exact = hybrid.def.pow !== undefined;
+                const offset = !!(hybrid.def.pre || hybrid.def.post);
+                const sig = !exact && value ? significantDigits(value, unc) : null;
+                const digits = sig
+                    ? `the ${sig.digits} significant digit${sig.digits === 1 ? '' : 's'} of the printed value${sig.zerosAssumed ? ` (the zeros at the end of ${value} are taken as significant; an uncertainty would decide it)` : ''}`
+                    : 'the significant digits of the printed value';
                 note('DSI-UNIT-HYBRID', 'warning', 'Properties',
-                    `${where}: "${rawUnit}" is not a unit of the SI, so the value is written in si:hybrid (D-SI guide Section 7, p. 33): ${shown}. ` +
-                    `The SI value is converted with ${hybrid.def.definition}${hybrid.def.pow === undefined ? ', rounded two digits finer than the printed value' : ''}; check it.`);
+                    `${where}: "${rawUnit}" is not a unit of the SI, so the value is augmented: it is written in si:hybrid (D-SI guide Section 7, p. 33), first converted into the SI, then as printed: ${shown}. ` +
+                    `The SI value is converted with ${hybrid.def.definition}` +
+                    (exact ? ', with the power of ten in the number, so nothing is rounded.'
+                        : `; it is rounded to ${digits}, and ${unc ? 'the uncertainty is' : 'an uncertainty would be'} rounded up to two significant digits. ` +
+                          `Rounding the converted value adds an uncertainty contribution of up to half a unit of its last digit, which is not included in the converted uncertainty.`) +
+                    (offset ? (hybrid.difference
+                        ? ' The quantity is a temperature difference, so it is converted without the offset of the scale (1 °F = 5/9 K).'
+                        : ' It is converted as a temperature, with the offset of the scale; if it is a temperature difference, say so in the quantity name (for example "Temperature difference"), and it is converted without the offset.') : '') +
+                    ' Check it.');
             } else if (hybrid && w.label && !/VPDB|SMOW|SLAP|CDT|AIR| vs /.test(label)) {
                 note('DSI-DELTA-REFERENCE', 'warning', 'Properties',
                     `${where}: the isotope delta value is written with si:label "${label}", but the reference scale (VPDB, VSMOW …) is not stated in the unit or the description. Add it to the quantity name.`);
+            } else if (hybrid && w.label) {
+                note('DSI-UNIT-HYBRID', 'warning', 'Properties',
+                    `${where}: the isotope delta value in "${rawUnit}" is augmented: it is written in si:hybrid (D-SI guide Section 7, p. 33), first as a number of dimension one, then as printed: ${shown}, with si:label "${label}". ` +
+                    `The digits are unchanged; only the exponent e-3 is added (1 ‰ = 10⁻³).`);
             } else if (!hybrid && exp && toDsi(rawUnit, unitCtx).kind === 'massConcentration') {
                 note('DSI-VALUE-SCALED', 'warning', 'Properties',
-                    `${where}: "${rawUnit}" is a mass concentration (1 % (w/v) = 1 g per 100 mL = 10 g/L), so the value is written in ${unitOut} with the number times 10: ${shown}.`);
+                    `${where}: "${rawUnit}" is a mass concentration (1 % (w/v) = 1 g per 100 mL = 10 g/L), so the unit is changed and the value is written in ${unitOut} with the number times 10: ${shown}.`);
+            } else if (!hybrid && w.changed) {
+                note('DSI-UNIT-CHANGED', 'warning', 'Properties', `${where}: the unit is changed: ${w.changed}`);
             }
         };
         // si:label and si:quantityTypeQUDT: as the rules decide, or as read from an XML file (kept when it is opened again)
@@ -572,10 +593,10 @@ ${indent}                  <si:value>${value}</si:value>
 ${indent}                  <si:unit>${escapeXml(unit.replace(/\s+/g, ''))}</si:unit>${uncXml(uv, indent)}
 ${indent}                </si:real>`;
             if (hybrid) {
-                const siValue = hybrid.def ? hybridValue(num, hybrid.def) : shiftDecimal(num, exp);
-                const siUnc = u === null ? null : hybrid.def ? hybridValue(u, hybrid.def, true) : shiftDecimal(u, exp);
+                const siValue = hybrid.def ? hybridValue(num, hybrid.def, { withUncertainty: u, difference: hybrid.difference }) : shiftDecimal(num, exp);
+                const siUnc = u === null ? null : hybrid.def ? hybridValue(u, hybrid.def, { uncertainty: true }) : shiftDecimal(u, exp);
                 if (siValue !== null && (u === null || siUnc !== null)) {
-                    writtenNotes(writtenValueText(num, unitOut, w));
+                    writtenNotes(writtenValueText(num, unitOut, w, u), num, u);
                     return `
                 <si:hybrid>${real(siValue, unitOut, siUnc, '  ')}${real(num, hybrid.asWritten, u, '  ')}
                 </si:hybrid>`;
@@ -601,7 +622,7 @@ ${indent}                  <si:unitXMLList>${escapeXml(values.map(() => unit).jo
 ${indent}                </si:realListXMLList>`;
             if (hybrid) {
                 // si:hybrid of two lists (D-SI guide Figure 7.2, p. 35); a unit as printed with a space cannot be a list item
-                const siValues = nums.map(n => (hybrid.def ? hybridValue(n, hybrid.def) : shiftDecimal(n, exp)));
+                const siValues = nums.map(n => (hybrid.def ? hybridValue(n, hybrid.def, { difference: hybrid.difference }) : shiftDecimal(n, exp)));
                 if (!/\s/.test(hybrid.asWritten) && siValues.every(v => v !== null)) {
                     writtenNotes(`${siValues.join(' ')} ${unitOut} and ${nums.join(' ')} ${hybrid.asWritten}`);
                     return `
