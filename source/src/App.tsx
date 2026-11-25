@@ -3236,7 +3236,7 @@ const App: React.FC = () => {
 
               <div className="mt-6 pt-5 border-t border-line-soft">
                   <h3 className="text-sm font-semibold text-ink">Video guide</h3>
-                  <p className="hint mt-1 max-w-[68ch]">A 12-minute video shows every step, from entering the API key to exporting the DRMD, with chapters and a transcript. It opens in a new tab, so your work here stays open.</p>
+                  <p className="hint mt-1 max-w-[68ch]">A 15-minute video shows every step, from entering the API key to exporting the DRMD, with chapters and a transcript. It opens in a new tab, so your work here stays open.</p>
                   <a href={VIDEO_GUIDE_URL} target="_blank" rel="noopener noreferrer" className="btn-secondary mt-3">
                       <Icon name="play" size={14} /> Watch the video guide <Icon name="external" size={13} className="text-ink-muted" />
                   </a>

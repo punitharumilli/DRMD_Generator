@@ -26,7 +26,7 @@ Create machine-readable Digital Reference Material Documents (DRMD): enter them 
 
 [![Video guide for the DRMD AI Generator. Click to watch the video.](video/video-guide-preview.jpg)](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator)
 
-A 12-minute walkthrough of every step, from entering the API key to converting a whole folder, with spoken explanation and captions. Click the picture to watch it on the DRMD video site, with chapters, a transcript and a download option.
+A 15-minute walkthrough of every step, from entering the API key to converting a whole folder, with spoken explanation and captions. Click the picture to watch it on the DRMD video site, with chapters, a transcript and a download option.
 
 **Chapters.** Click a time to start the video at that point.
 
@@ -34,18 +34,20 @@ A 12-minute walkthrough of every step, from entering the API key to converting a
 |---:|---|
 | [0:00](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator) | Introduction |
 | [0:20](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=20) | Getting started |
-| [0:52](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=52) | Settings and API key |
-| [1:27](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=87) | Converting a certificate |
-| [2:42](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=162) | Administrative data |
-| [5:04](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=304) | Materials |
-| [5:32](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=332) | Properties |
-| [7:36](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=456) | Checking values |
-| [8:24](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=504) | Statements |
-| [8:45](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=525) | Comment and documents |
-| [9:11](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=551) | Validate and export |
-| [10:39](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=639) | Converting a folder |
-| [12:02](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=722) | Importing an XML file |
-| [12:15](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=735) | Summary |
+| [1:20](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=80) | AI settings and API key |
+| [2:14](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=134) | Converting a certificate |
+| [3:29](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=209) | Administrative data |
+| [5:37](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=337) | Materials |
+| [6:15](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=375) | Properties |
+| [9:10](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=550) | Statements |
+| [9:31](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=571) | Comment and documents |
+| [9:48](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=588) | Checking values |
+| [10:27](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=627) | Validate and export |
+| [11:50](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=710) | Converting a folder |
+| [12:59](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=779) | Entering a DRMD by hand |
+| [13:31](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=811) | Linking materials and values |
+| [14:45](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=885) | Opening and editing an XML file |
+| [15:05](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=905) | Summary |
 
 ---
 
