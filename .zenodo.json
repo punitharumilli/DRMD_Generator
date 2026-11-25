@@ -1,0 +1,56 @@
+{
+  "upload_type": "software",
+  "title": "DRMD (Digital Reference Material Document) AI Generator",
+  "version": "1.0.0",
+  "creators": [
+    {
+      "name": "Arumilli, Punith Durga Prasad",
+      "affiliation": "Bundesanstalt für Materialforschung und -prüfung (BAM)",
+      "orcid": "0009-0004-1165-9000"
+    }
+  ],
+  "description": "<p>The DRMD AI Generator is a single HTML page that creates Digital Reference Material Documents (DRMD), the XML format for reference material certificates and product information sheets aligned with ISO 33401:2024. It runs in a web browser without installation. A DRMD can be entered by hand, opened and edited, or converted from the PDF of a certificate or product information sheet with an AI model chosen by the user (Google Gemini, OpenAI, Anthropic, Mistral AI, OpenRouter or Qwen), using the user's own API key, which stays in the browser. Each value is shown next to the PDF with its source text, units are written in the Digital System of Units (D-SI) of PTB, identifiers (ROR, CAS, InChIKey) can be looked up, and every document is checked against the DRMD XML Schema and its 31 business rules, version 1.0.0, which are built into the page.</p><p><strong>Content.</strong> DRMD-Generator.html (the program), the source code in source/ with its build instructions and tests, and the third-party notices in source/THIRD-PARTY-NOTICES.txt.</p><p><strong>Licence.</strong> The work of BAM is licensed under the European Union Public Licence, version 1.2 (EUPL-1.2), except the DRMD logo, which may be used only as described in LOGO_POLICY.md. The bundled third-party software (React, PDF.js, JSZip, the Inter typeface) keeps its own licence, listed in source/THIRD-PARTY-NOTICES.txt.</p><p>The development of the DRMD is partially funded and supported by the QI-Digital project.</p>",
+  "license": "eupl-1.2",
+  "access_right": "open",
+  "language": "eng",
+  "keywords": [
+    "reference materials",
+    "certified reference materials",
+    "ISO 33401",
+    "digital certificate",
+    "PDF conversion",
+    "artificial intelligence",
+    "D-SI",
+    "XML",
+    "metrology",
+    "quality infrastructure"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/BAMresearch/drmd-schema",
+      "relation": "requires",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://bamresearch.github.io/drmd-guidance/",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://bamresearch.github.io/drmd-videos/",
+      "relation": "isDocumentedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "10.21014/tc6-2025.067",
+      "relation": "isDescribedBy",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.5281/zenodo.3366901",
+      "relation": "requires",
+      "scheme": "doi"
+    }
+  ],
+  "notes": "Part of the DRMD project of BAM: https://bamresearch.github.io/drmd/. Open the generator: https://bamresearch.github.io/drmd-generator/. The DRMD logo is not covered by the EUPL-1.2; it may be used only as described in LOGO_POLICY.md."
+}

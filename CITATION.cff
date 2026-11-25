@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: >-
+  If you use the DRMD AI Generator, please cite the version you used with the metadata in this
+  file.
+type: software
+title: "DRMD (Digital Reference Material Document) AI Generator"
+version: 1.0.0
+license: EUPL-1.2
+repository-code: "https://github.com/BAMresearch/drmd-generator"
+url: "https://bamresearch.github.io/drmd-generator/"
+authors:
+  - family-names: Arumilli
+    given-names: Punith Durga Prasad
+    orcid: "https://orcid.org/0009-0004-1165-9000"
+    affiliation: "Bundesanstalt für Materialforschung und -prüfung (BAM)"
+abstract: >-
+  A single HTML page that creates Digital Reference Material Documents (DRMD), the XML format for
+  reference material certificates and product information sheets aligned with ISO 33401:2024. It
+  runs in a web browser without installation. A DRMD can be entered by hand, opened and edited, or
+  converted from a PDF with an AI model chosen by the user, using the user's own API key. Units are
+  written in D-SI, and every document is checked against the DRMD XML Schema and its business rules,
+  version 1.0.0.
+keywords:
+  - reference materials
+  - ISO 33401
+  - digital certificate
+  - PDF conversion
+  - D-SI
+  - metrology
+  - quality infrastructure
