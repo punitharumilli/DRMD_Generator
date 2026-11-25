@@ -1,14 +1,28 @@
-# DRMD AI Generator
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/drmd-logo-on-white.png">
+    <img src="assets/drmd-logo.png" alt="Digital Reference Material Document (DRMD)" width="420">
+  </picture>
+</p>
+
+<h1 align="center">DRMD (Digital Reference Material Document) AI Generator</h1>
+
+<p align="center">
+  <a href="https://github.com/BAMresearch/drmd-generator/actions/workflows/pages.yml"><img src="https://github.com/BAMresearch/drmd-generator/actions/workflows/pages.yml/badge.svg" alt="Publish on GitHub Pages"></a>
+  <img src="https://img.shields.io/badge/version-1.0.0-0F2F6D" alt="Version 1.0.0">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-EUPL--1.2-0F2F6D" alt="Licence: EUPL-1.2"></a>
+  <a href="https://bamresearch.github.io/drmd-generator/"><img src="https://img.shields.io/badge/open-in%20the%20browser-0096DC" alt="Open the generator in the browser"></a>
+</p>
 
 Create machine-readable Digital Reference Material Documents (DRMD): enter them by hand, open and edit existing ones, or convert reference material certificates and product information sheets from PDF with AI.
 
-**Version 1.0.0** · Runs in the browser · No installation · **[Open the generator](https://punitharumilli.github.io/DRMD_Generator/)**
+**Version 1.0.0** · Runs in the browser · No installation · **[Open the generator](https://bamresearch.github.io/drmd-generator/)**
 
 ---
 
 ## Video guide
 
-[![Video guide for the DRMD AI Generator. Click to watch the video.](video/video-guide-preview.jpg)](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator)
+[![Video guide for the DRMD AI Generator. Click to watch the video.](video/video-guide-preview.jpg)](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator)
 
 A 12-minute walkthrough of every step, from entering the API key to converting a whole folder, with spoken explanation and captions. Click the picture to watch it on the DRMD video site, with chapters, a transcript and a download option.
 
@@ -16,20 +30,20 @@ A 12-minute walkthrough of every step, from entering the API key to converting a
 
 | Time | Chapter |
 |---:|---|
-| [0:00](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator) | Introduction |
-| [0:20](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=20) | Getting started |
-| [0:52](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=52) | Settings and API key |
-| [1:27](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=87) | Converting a certificate |
-| [2:42](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=162) | Administrative data |
-| [5:04](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=304) | Materials |
-| [5:32](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=332) | Properties |
-| [7:36](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=456) | Checking values |
-| [8:24](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=504) | Statements |
-| [8:45](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=525) | Comment and documents |
-| [9:11](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=551) | Validate and export |
-| [10:39](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=639) | Converting a folder |
-| [12:02](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=722) | Importing an XML file |
-| [12:15](https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator&t=735) | Summary |
+| [0:00](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator) | Introduction |
+| [0:20](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=20) | Getting started |
+| [0:52](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=52) | Settings and API key |
+| [1:27](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=87) | Converting a certificate |
+| [2:42](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=162) | Administrative data |
+| [5:04](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=304) | Materials |
+| [5:32](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=332) | Properties |
+| [7:36](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=456) | Checking values |
+| [8:24](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=504) | Statements |
+| [8:45](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=525) | Comment and documents |
+| [9:11](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=551) | Validate and export |
+| [10:39](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=639) | Converting a folder |
+| [12:02](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=722) | Importing an XML file |
+| [12:15](https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator&t=735) | Summary |
 
 ---
 
@@ -60,7 +74,7 @@ Nothing needs to be installed, and no administrator rights are required.
 ## Getting started
 
 1. Open the generator in Chrome or Edge, in one of two ways:
-   - **Online:** go to <https://punitharumilli.github.io/DRMD_Generator/>
+   - **Online:** go to <https://bamresearch.github.io/drmd-generator/>
    - **As a file:** download **`DRMD-Generator.html`** from the [latest release](../../releases/latest) and open it, either by double-clicking it or by dragging it into a browser window.
 2. The generator opens on **Home**, which describes the three ways of working:
    - **Manual entry:** click **New DRMD** and fill in the tabs from **Administrative** to **Statements**.
@@ -210,7 +224,7 @@ The generator connects to the internet only for these tasks. If your organisatio
 | Reading the certificates (only the provider you choose) | `generativelanguage.googleapis.com` (Google Gemini), `api.openai.com`, `api.anthropic.com`, `api.mistral.ai`, `dashscope-intl.aliyuncs.com` / `dashscope-us.aliyuncs.com` / `dashscope.aliyuncs.com` (Qwen, by region), `openrouter.ai` |
 | CAS numbers and InChIKeys of substances | `pubchem.ncbi.nlm.nih.gov` |
 | ROR IDs of organisations | `api.ror.org` |
-| Opening the generator online (not needed for the file) | `punitharumilli.github.io` |
+| Opening the generator online (not needed for the file) | `bamresearch.github.io` |
 
 Links to the DRMD guidance document and the video guide open only when you click them. Without these addresses the form can still be filled in by hand, validated and exported.
 
@@ -248,7 +262,7 @@ Every three months, check for each provider that the recommended models are stil
 
 ## Documentation
 
-**DRMD guidance document:** <https://punitharumilli.github.io/BestPracticeDocs/>
+**DRMD guidance document:** <https://bamresearch.github.io/drmd-guidance/>
 
 The guide explains every element of the DRMD schema and its rules. You can also reach the relevant section directly by clicking any field name in the generator.
 
@@ -262,7 +276,7 @@ The complete source code of the generator is in the [`source`](source/) folder: 
 
 ## Changes and contributions
 
-BAM maintains the generator and publishes its official version in this repository and at <https://punitharumilli.github.io/DRMD_Generator/>. If you find an error or need a change, please tell us instead of publishing a changed copy: open an issue in this repository or write to [drmd@bam.de](mailto:drmd@bam.de). BAM reviews each request and releases the change, so that everyone keeps working with the same generator. See [CONTRIBUTING.md](CONTRIBUTING.md).
+BAM maintains the generator and publishes its official version in this repository and at <https://bamresearch.github.io/drmd-generator/>. If you find an error or need a change, please tell us instead of publishing a changed copy: open an issue in this repository or write to [drmd@bam.de](mailto:drmd@bam.de). BAM reviews each request and releases the change, so that everyone keeps working with the same generator. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -281,7 +295,7 @@ In short (the licence text is binding, not this summary):
 
 The DRMD files and HTML reports you create with the generator are your own documents.
 
-The licence does not cover the BAM name and logo or the DRMD logo, which is the icon of the generator page and appears in `video/video-guide-preview.jpg`; please do not use them without BAM's permission.
+The licence does not cover the BAM name and logo or the DRMD logo. The DRMD logo (`assets/drmd-logo.png`, the official artwork; `assets/drmd-logo-on-white.png`; its scaled copy `source/styles/drmd-logo-header.png` in the header of the generator; the page icons `source/styles/favicon-32.png` and `favicon-64.png`) belongs to BAM and may be used as described in the [Logo Policy](LOGO_POLICY.md). A changed version of the generator must not show it. The video preview `video/video-guide-preview.jpg` shows earlier DRMD artwork; it also belongs to BAM, is not covered by the EUPL and is not the official logo, so it may not be used; it is replaced with the next version of the video guide. The BAM name and logo may not be used without BAM's permission.
 
 The generator file also contains open-source software of other projects, each under its own licence: React (MIT), the Google Gen AI SDK (Apache-2.0), PDF.js with its JBIG2 and OpenJPEG image decoders (Apache-2.0, BSD-3-Clause, BSD-2-Clause), JSZip (MIT), p-retry and retry (MIT), Tailwind CSS (MIT) and the Inter typeface (SIL Open Font License 1.1). [`source/THIRD-PARTY-NOTICES.txt`](source/THIRD-PARTY-NOTICES.txt) lists them with their versions, copyright notices and licence texts; the same texts, and the EUPL, are included at the end of `DRMD-Generator.html`.
 

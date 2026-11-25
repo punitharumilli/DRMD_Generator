@@ -1,6 +1,6 @@
 # Publishes the DRMD AI Generator on GitHub Pages.
 # After each change to DRMD-Generator.html on the main branch, the page is updated at
-# https://punitharumilli.github.io/DRMD_Generator/
+# https://bamresearch.github.io/drmd-generator/
 
 name: Publish on GitHub Pages
 

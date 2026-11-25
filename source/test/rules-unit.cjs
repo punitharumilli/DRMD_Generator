@@ -8,7 +8,7 @@
 // collapses the line breaks of the file).
 //
 // Run: node test/rules-unit.cjs [path to drmd-business-rules.sch]
-// Default path: the environment variable DRMD_RULES, or ../../Schema/drmd-business-rules.sch next to
+// Default path: the environment variable DRMD_RULES, or ../../drmd-schema/drmd-business-rules.sch next to
 // this repository (a clone of the DRMD schema repository).
 const fs = require('fs');
 const path = require('path');
@@ -18,7 +18,7 @@ const mod = { exports: {} };
 new Function('module', 'exports', 'require', out.outputFiles[0].text)(mod, mod.exports, require);
 const { SCHEMATRON_PATTERNS, SCHEMATRON_NAMESPACES, DRMD_SCHEMA_VERSION } = mod.exports;
 
-const file = process.argv[2] || process.env.DRMD_RULES || path.join(__dirname, '../../../Schema/drmd-business-rules.sch');
+const file = process.argv[2] || process.env.DRMD_RULES || path.join(__dirname, '../../../drmd-schema/drmd-business-rules.sch');
 if (!fs.existsSync(file)) { console.error(`Rule file not found: ${file}. Pass the path of drmd-business-rules.sch.`); process.exit(2); }
 const text = fs.readFileSync(file, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
 const ws = (s) => String(s).replace(/\s+/g, ' ').trim();

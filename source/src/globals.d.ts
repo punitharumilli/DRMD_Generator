@@ -7,3 +7,5 @@ declare const __APP_VERSION__: string;
 declare const __COPYRIGHT_YEARS__: string;
 /** Where the source code is published (package.json "repository"). */
 declare const __SOURCE_URL__: string;
+/** The DRMD logo for the header, as a data: URL (styles/drmd-logo-header.png). */
+declare const __DRMD_LOGO__: string;

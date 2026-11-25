@@ -71,6 +71,9 @@ const app = await esbuild.build({
     __APP_VERSION__: JSON.stringify(pkg.version),
     __COPYRIGHT_YEARS__: JSON.stringify(COPYRIGHT_YEARS),
     __SOURCE_URL__: JSON.stringify(SOURCE_URL),
+    // The DRMD logo (BAM, see LOGO_POLICY.md), scaled for the header; embedded so that the page
+    // stays one self-contained file.
+    __DRMD_LOGO__: JSON.stringify('data:image/png;base64,' + fs.readFileSync(path.join(ROOT, 'styles/drmd-logo-header.png')).toString('base64')),
   },
   external: ['node:buffer'],
   conditions: ['browser'],
@@ -140,6 +143,8 @@ const html = `<!DOCTYPE html>
   ${COPYRIGHT}
   Licensed under the EUPL v1.2
   Source code: ${SOURCE_URL}
+  The DRMD logo in this file belongs to BAM and is not covered by the EUPL v1.2; it may be used as
+  described in LOGO_POLICY.md in the source code repository. A changed version must not show it.
 
   The development of the Digital Reference Material Document (DRMD) is partially funded and
   supported by the QI-Digital project (https://www.qi-digital.de/).

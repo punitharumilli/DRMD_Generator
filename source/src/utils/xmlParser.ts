@@ -324,7 +324,8 @@ export const parseDrmdXml = (xmlString: string): DRMD => {
                 name: getNestedContent(p, ["drmd:name", "dcc:content"]),
                 description: childElements(p, "drmd:description")[0] ? getNestedContent(childElements(p, "drmd:description")[0], ["dcc:content"]) : "",
                 procedures: methods.join("\n\n"),
-                isCertified: p.getAttribute("isCertified") === "true",
+                // xs:boolean: "true" and "1" both mean certified (spaces around the value are ignored)
+                isCertified: ["true", "1"].includes((p.getAttribute("isCertified") || "").trim()),
                 materialRef: blockRef.materialUuid || undefined,
                 results: []
             };

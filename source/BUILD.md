@@ -76,13 +76,18 @@ npm run test:ids
 
 `test/cas-unit.cjs` checks which CAS Registry Number is written for a substance: only one of the candidates that PubChem and the element table give, each with a valid check digit. With one candidate no model is asked; with several the model chooses one of them (the first is taken if it gives no valid choice); with none no CAS number is written. The InChIKey and the PubChem CID are always those of PubChem. Run it after every change to `decideChemicalIdentifiersDetailed` in `llmService.ts` or to `chemicalIdentifierService.ts`.
 
-## Test of the embedded business rules
+## The embedded business rules
+
+The generator runs the official DRMD business rules in the browser. They are copied from
+`drmd-business-rules.sch` of the DRMD schema repository (https://github.com/BAMresearch/drmd-schema)
+into `src/utils/drmdBusinessRules.ts` by a script, and a test checks the copy:
 
 ```
-npm run test:rules -- ../../Schema/drmd-business-rules.sch
+python3 scripts/rules-from-sch.py ../../drmd-schema/drmd-business-rules.sch
+npm run test:rules -- ../../drmd-schema/drmd-business-rules.sch
 ```
 
-`test/rules-unit.cjs` compares the rules embedded in `src/utils/drmdBusinessRules.ts` with the official rule file `drmd-business-rules.sch` of the DRMD schema repository (https://github.com/punitharumilli/Schema): the same patterns, rule contexts, assertion ids, roles, XPath tests and messages, in the same order, the same namespaces and the same `schemaVersion`. Give the path of the rule file, or set `DRMD_RULES`. Run it after every change to either file.
+`test/rules-unit.cjs` compares the rules embedded in `src/utils/drmdBusinessRules.ts` with the official rule file `drmd-business-rules.sch` of the DRMD schema repository (https://github.com/BAMresearch/drmd-schema): the same patterns, rule contexts, assertion ids, roles, XPath tests and messages, in the same order, the same namespaces and the same `schemaVersion`. Give the path of the rule file, or set `DRMD_RULES`. Run it after every change to either file.
 
 ## Every three months
 
@@ -100,6 +105,8 @@ Copyright (c) 2026 Bundesanstalt für Materialforschung und -prüfung (BAM). Lic
 The built file carries its licence notices, as the EUPL requires: at the top the copyright notice, "Licensed under the EUPL v1.2" and the address of this source code (Articles 3 and 5), and at the end the full text of the EUPL (`LICENSE`) and of every third-party licence (`THIRD-PARTY-NOTICES.txt`). `build.mjs` reads both files and stops if one is missing or contains text that cannot go into an HTML comment.
 
 `THIRD-PARTY-NOTICES.txt` lists every third-party part of the built file, with its version, copyright notice and licence text. When a library is added, updated or removed (`package.json`, `vendor/`), change its entry in the same commit.
+
+The header of the generator shows the DRMD logo. `build.mjs` embeds `styles/drmd-logo-header.png` (the official logo, scaled to 320 pixels wide) as `__DRMD_LOGO__`, and the page icons `styles/favicon-32.png` and `styles/favicon-64.png` (the logo on a white square). The logo belongs to BAM and is not covered by the EUPL (see `LOGO_POLICY.md` in the repository root); a changed version of the generator must remove it from the header and replace the icons.
 
 ## When the repository moves
 

@@ -12,11 +12,11 @@ Never send a real API key, also not in a screenshot. If a key of yours may have 
 
 ## Supported version
 
-Only the current release, published at <https://punitharumilli.github.io/DRMD_Generator/>, receives corrections.
+Only the current release, published at <https://bamresearch.github.io/drmd-generator/>, receives corrections.
 
 ## Checking that you use the official page
 
-The published page is the file `DRMD-Generator.html` of the main branch of this repository, copied unchanged by the workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml). To check a copy, download the file (for example from <https://punitharumilli.github.io/DRMD_Generator/DRMD-Generator.html>), compute its SHA-256 checksum and compare it with the checksum given in the notes of the release:
+The published page is the file `DRMD-Generator.html` of the main branch of this repository, copied unchanged by the workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml). To check a copy, download the file (for example from <https://bamresearch.github.io/drmd-generator/DRMD-Generator.html>), compute its SHA-256 checksum and compare it with the checksum given in the notes of the release:
 
 - Windows (PowerShell): `Get-FileHash DRMD-Generator.html -Algorithm SHA256`
 - macOS and Linux: `shasum -a 256 DRMD-Generator.html`

@@ -7,10 +7,10 @@
 // the page with PAGE_SHA256 (leave it empty to only show it), runs the tests on the page's own functions
 // (harness.js) and prints the results with their SHA-256. Nothing is sent anywhere.
 (async () => {
-  const PAGE = 'https://punitharumilli.github.io/DRMD_Generator/';
+  const PAGE = 'https://bamresearch.github.io/drmd-generator/';
   const REF = 'main';            // a commit of this repository, for example the one of a release
   const PAGE_SHA256 = '';        // the SHA-256 of the release page, if it is to be checked
-  const BASE = `https://raw.githubusercontent.com/punitharumilli/DRMD_Generator/${REF}/source/test/`;
+  const BASE = `https://raw.githubusercontent.com/BAMresearch/drmd-generator/${REF}/source/test/`;
   const get = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.text(); };
   const hex = async (t) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))).map(b => b.toString(16).padStart(2, '0')).join('');
   const html = await get(PAGE);

@@ -5,10 +5,10 @@
   "description": "Builds the DRMD Generator into one self-contained HTML file.",
   "license": "EUPL-1.2",
   "author": "Bundesanstalt für Materialforschung und -prüfung (BAM)",
-  "homepage": "https://punitharumilli.github.io/DRMD_Generator/",
+  "homepage": "https://bamresearch.github.io/drmd-generator/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/punitharumilli/DRMD_Generator",
+    "url": "https://github.com/BAMresearch/drmd-generator",
     "directory": "source"
   },
   "scripts": {

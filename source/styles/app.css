@@ -129,3 +129,8 @@
 
 /* Field focus is mirrored in the PDF: the field being reviewed gets a marker-coloured rule */
 .field-row:focus-within > .field-label-row .field-label { color: #123f4c; }
+
+/* Header: on narrower windows the version badge, and then the words "AI Generator", give way, so
+   that the toolbar keeps all its buttons and nothing is ever drawn over the DRMD logo. */
+@media (max-width: 1099px) { .app-version { display: none; } }
+@media (max-width: 639px) { .app-title-text { display: none; } }

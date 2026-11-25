@@ -10,10 +10,10 @@
  * than the top of a chapter.
  */
 
-export const DOCS_BASE = "https://punitharumilli.github.io/BestPracticeDocs/";
+export const DOCS_BASE = "https://bamresearch.github.io/drmd-guidance/";
 
 /** The video guide for this generator on the DRMD video site. */
-export const VIDEO_GUIDE_URL = "https://punitharumilli.github.io/DRMD_Videos/?v=drmd-ai-generator";
+export const VIDEO_GUIDE_URL = "https://bamresearch.github.io/drmd-videos/?v=drmd-ai-generator";
 
 /**
  * Normalized label → path within the guide.

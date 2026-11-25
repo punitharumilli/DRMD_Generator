@@ -3220,6 +3220,18 @@ const App: React.FC = () => {
                   </dd>
                   <dt className="text-ink-muted">Funding</dt>
                   <dd>The development of the Digital Reference Material Document (DRMD) is partially funded and supported by the QI-Digital project.</dd>
+                  <dt className="text-ink-muted">Logo</dt>
+                  <dd>
+                      The DRMD logo belongs to BAM and is not licensed under the EUPL. It may be used as described in the{' '}
+                      <a href="https://github.com/BAMresearch/drmd-generator/blob/main/LOGO_POLICY.md" target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">Logo Policy</a>.
+                      A changed version of the generator must not show it.
+                  </dd>
+                  <dt className="text-ink-muted">Publisher</dt>
+                  <dd>
+                      Bundesanstalt für Materialforschung und -prüfung (BAM):{' '}
+                      <a href="https://bam.de/en/disclaimer" target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">imprint</a> and{' '}
+                      <a href="https://bam.de/en/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-petrol-600 underline underline-offset-2 hover:text-petrol-700">privacy policy</a>.
+                  </dd>
               </dl>
 
               <div className="mt-6 pt-5 border-t border-line-soft">
@@ -4479,12 +4491,17 @@ const App: React.FC = () => {
       <input type="file" ref={bulkFolderInputRef} onChange={handleBulkUpload} className="hidden" multiple accept="application/pdf" webkitdirectory="" directory="" />
 
       <header className="shrink-0 h-14 bg-white border-b border-line flex items-center gap-4 px-4">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <h1 className="text-lg font-semibold tracking-[-0.01em] text-ink whitespace-nowrap">DRMD AI Generator</h1>
-          <span className="inline-flex items-center h-5 px-1.5 rounded-sm border border-line text-2xs font-medium text-ink-muted tabular-nums" title="Version">v{__APP_VERSION__}</span>
+        {/* The title never shrinks, so nothing is drawn over the DRMD logo. On narrower windows the
+            version badge and then the words "AI Generator" give way (styles/app.css), so that the
+            toolbar keeps all its buttons; only on phone-sized screens does the toolbar scroll. */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-[-0.01em] text-ink whitespace-nowrap" aria-label="DRMD AI Generator">
+            <img src={__DRMD_LOGO__} alt="DRMD" width={105} height={36} className="shrink-0" style={{ display: 'block', height: 36, width: 'auto' }} />
+            <span className="app-title-text">AI Generator</span>
+          </h1>
+          <span className="app-version inline-flex items-center h-5 px-1.5 rounded-sm border border-line text-2xs font-medium text-ink-muted tabular-nums" title="Version">v{__APP_VERSION__}</span>
         </div>
-        <div className="flex-1" />
-        <nav className="flex items-center gap-2" aria-label="Documents">
+        <nav className="ml-auto flex items-center gap-2 min-w-0 overflow-x-auto" aria-label="Documents">
           <button onClick={requestNewDrmd} disabled={busy} className="btn-secondary" title="Clear the form and start a new DRMD" aria-label="New DRMD">
             <Icon name="plus" /> <span className="max-lg:hidden">New DRMD</span>
           </button>
