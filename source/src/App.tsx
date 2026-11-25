@@ -4496,7 +4496,9 @@ const App: React.FC = () => {
             toolbar keeps all its buttons; only on phone-sized screens does the toolbar scroll. */}
         <div className="flex items-center gap-2.5 shrink-0">
           <h1 className="flex items-center gap-2.5 text-lg font-semibold tracking-[-0.01em] text-ink whitespace-nowrap" aria-label="DRMD AI Generator">
-            <img src={__DRMD_LOGO__} alt="DRMD" width={105} height={36} className="shrink-0" style={{ display: 'block', height: 36, width: 'auto' }} />
+            <a href="https://bamresearch.github.io/drmd/" target="_blank" rel="noopener noreferrer" title="DRMD website" className="shrink-0">
+              <img src={__DRMD_LOGO__} alt="DRMD" width={105} height={36} style={{ display: 'block', height: 36, width: 'auto' }} />
+            </a>
             <span className="app-title-text">AI Generator</span>
           </h1>
           <span className="app-version inline-flex items-center h-5 px-1.5 rounded-sm border border-line text-2xs font-medium text-ink-muted tabular-nums" title="Version">v{__APP_VERSION__}</span>

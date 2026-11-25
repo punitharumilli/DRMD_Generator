@@ -1,8 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/drmd-logo-on-white.png">
-    <img src="assets/drmd-logo.png" alt="Digital Reference Material Document (DRMD)" width="420">
-  </picture>
+  <a href="https://bamresearch.github.io/drmd/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/drmd-logo-on-white.png">
+      <img src="assets/drmd-logo.png" alt="Digital Reference Material Document (DRMD)" width="420">
+    </picture>
+  </a>
 </p>
 
 <h1 align="center">DRMD (Digital Reference Material Document) AI Generator</h1>
